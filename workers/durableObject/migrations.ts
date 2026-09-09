@@ -194,4 +194,43 @@ export const mailboxMigrations: Migration[] = [
             CREATE INDEX idx_template_assets_template_id ON template_assets(template_id);
         `),
 	},
+	{
+		// No txn(): idempotent IF NOT EXISTS statements, run via transactionSync.
+		name: "10_add_newsletters",
+		sql: `
+            CREATE TABLE IF NOT EXISTS newsletters (
+                id TEXT PRIMARY KEY,
+                mailbox_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                template_id TEXT,
+                subject TEXT,
+                body TEXT,
+                from_name TEXT,
+                reply_to TEXT,
+                total INTEGER NOT NULL DEFAULT 0,
+                sent INTEGER NOT NULL DEFAULT 0,
+                failed INTEGER NOT NULL DEFAULT 0,
+                scheduled_at TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS newsletter_recipients (
+                id TEXT PRIMARY KEY,
+                newsletter_id TEXT NOT NULL,
+                email TEXT NOT NULL,
+                vars TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT,
+                sent_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_newsletter_recipients_job
+                ON newsletter_recipients(newsletter_id, status);
+        `,
+	},
 ];

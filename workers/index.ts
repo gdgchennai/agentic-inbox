@@ -22,8 +22,16 @@ import {
 	TemplateBodySchema,
 	TemplateUpdateSchema,
 	TemplateAssetBodySchema,
+	NewsletterValidateSchema,
+	NewsletterCreateSchema,
 } from "./lib/schemas";
 import { buildSendBody, renderTemplateForDraft } from "./lib/templates";
+import {
+	validateNewsletterCsv,
+	requiredTemplateKeys,
+	MAX_NEWSLETTER_RECIPIENTS,
+} from "./lib/newsletter";
+import type { TemplatePlaceholder } from "../shared/templates";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
@@ -441,6 +449,112 @@ app.delete(
 		return c.body(null, 204);
 	},
 );
+
+// -- Newsletters (bulk send) --------------------------------------
+
+type NewsletterStub = {
+	getTemplate: (id: string) => Promise<
+		{ subject: string; body: string; placeholders: TemplatePlaceholder[] } | null
+	>;
+	listNewsletters: () => Promise<unknown[]>;
+	getNewsletter: (id: string) => Promise<unknown | null>;
+	createNewsletter: (data: unknown, recipients: unknown[]) => Promise<unknown>;
+	startNewsletter: (id: string) => Promise<Record<string, unknown>>;
+	pauseNewsletter: (id: string) => Promise<Record<string, unknown>>;
+	resumeNewsletter: (id: string) => Promise<Record<string, unknown>>;
+	cancelNewsletter: (id: string) => Promise<Record<string, unknown>>;
+	deleteNewsletter: (id: string) => Promise<Record<string, unknown>>;
+};
+
+const nlStub = (c: AppContext) => c.var.mailboxStub as unknown as NewsletterStub;
+
+/** Required placeholder columns for a newsletter's template (empty for plain). */
+async function newsletterKeys(
+	c: AppContext,
+	templateId?: string,
+): Promise<{ keys: string[]; template: { subject: string; body: string; placeholders: TemplatePlaceholder[] } | null } | { error: string }> {
+	if (!templateId) return { keys: [], template: null };
+	const template = await nlStub(c).getTemplate(templateId);
+	if (!template) return { error: `Template "${templateId}" not found` };
+	return { keys: requiredTemplateKeys(template), template };
+}
+
+app.get("/api/v1/mailboxes/:mailboxId/newsletters", async (c: AppContext) => {
+	return c.json(await nlStub(c).listNewsletters());
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/newsletters/validate", async (c: AppContext) => {
+	const { csv, template_id } = NewsletterValidateSchema.parse(await c.req.json());
+	const k = await newsletterKeys(c, template_id);
+	if ("error" in k) return c.json({ error: k.error }, 404);
+	const v = validateNewsletterCsv(csv, k.keys);
+	// Don't ship the full recipient list back on a dry run.
+	const { recipients: _r, ...summary } = v;
+	return c.json(summary);
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/newsletters", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!;
+	const body = NewsletterCreateSchema.parse(await c.req.json());
+	const k = await newsletterKeys(c, body.template_id);
+	if ("error" in k) return c.json({ error: k.error }, 404);
+
+	const v = validateNewsletterCsv(body.csv, k.keys);
+	if (v.missingKeys.length > 0) {
+		return c.json({ error: `CSV is missing required column(s): ${v.missingKeys.join(", ")}`, validation: { ...v, recipients: undefined } }, 400);
+	}
+	if (v.tooManyRecipients) {
+		return c.json({ error: `Too many recipients (max ${MAX_NEWSLETTER_RECIPIENTS})` }, 400);
+	}
+	if (v.recipients.length === 0) {
+		return c.json({ error: "No valid recipients in the CSV" }, 400);
+	}
+
+	const created = await nlStub(c).createNewsletter(
+		{
+			mailboxId,
+			name: body.name,
+			templateId: body.template_id ?? null,
+			subject: body.subject ?? null,
+			body: body.body ?? null,
+			fromName: body.from_name ?? null,
+			replyTo: body.reply_to ?? null,
+			scheduledAt: body.scheduled_at ?? null,
+		},
+		v.recipients,
+	);
+	return c.json(
+		{ newsletter: created, skippedInvalid: v.skippedInvalid, duplicatesRemoved: v.duplicatesRemoved },
+		201,
+	);
+});
+
+app.get("/api/v1/mailboxes/:mailboxId/newsletters/:id", async (c: AppContext) => {
+	const nl = await nlStub(c).getNewsletter(c.req.param("id")!);
+	return nl ? c.json(nl) : c.json({ error: "Newsletter not found" }, 404);
+});
+
+for (const action of ["start", "pause", "resume", "cancel"] as const) {
+	app.post(
+		`/api/v1/mailboxes/:mailboxId/newsletters/:id/${action}`,
+		async (c: AppContext) => {
+			const fn = `${action}Newsletter` as const;
+			const result = await nlStub(c)[fn](c.req.param("id")!);
+			if ("error" in result) {
+				return c.json(result, result.error === "Newsletter not found" ? 404 : 400);
+			}
+			return c.json(result);
+		},
+	);
+}
+
+app.delete("/api/v1/mailboxes/:mailboxId/newsletters/:id", async (c: AppContext) => {
+	const result = await nlStub(c).deleteNewsletter(c.req.param("id")!);
+	if ("error" in result) {
+		return c.json(result, result.error === "Newsletter not found" ? 404 : 400);
+	}
+	return c.body(null, 204);
+});
 
 // -- Folders --------------------------------------------------------
 

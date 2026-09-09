@@ -11,6 +11,7 @@ them over the REST API and MCP. For the UI, see **Templates** in the app sidebar
 - [Sending with a template](#sending-with-a-template-rest)
 - [Replies and forwards](#replies-and-forwards)
 - [How rendering works](#how-rendering-works)
+- [Newsletters (bulk send)](#newsletters-bulk-send)
 - [MCP](#mcp)
 - [Errors](#errors)
 
@@ -238,6 +239,61 @@ body without appending a quoted original.
    absolute `/assets/t/...` URLs.
 4. Send. AI "draft verification" is **skipped** for template sends (it would
    flatten the HTML), so template markup and images are preserved exactly.
+
+---
+
+## Newsletters (bulk send)
+
+Send a template (or a plain `{{token}}` message) to a CSV of recipients — now or
+at a scheduled time. Sends run in a **background alarm loop** at
+`NEWSLETTER_BATCH_SIZE` per `NEWSLETTER_INTERVAL_SECONDS` (default 20 / 60s ≈
+1,200/hr), separate from the interactive send limit. Newsletter sends are **not**
+written to the Sent folder — progress lives on the job.
+
+### CSV
+
+- Must have an **`email`** column (case-insensitive).
+- If `template_id` is set, **every** placeholder (declared keys ∪ `{{tokens}}` in
+  subject/body) must be a column. Extra columns are ignored.
+- Missing a required column → the whole upload is rejected.
+- Rows with a blank/invalid email are skipped; duplicate emails
+  (case-insensitive) are de-duped. Both are reported.
+- Max 20,000 recipients.
+
+### Routes (`/api/v1/mailboxes/{mailboxId}`)
+
+| Method | Path | |
+|---|---|---|
+| POST | `/newsletters/validate` | `{ csv, template_id? }` → dry-run summary (`missingKeys`, `validCount`, `skippedInvalid`, `duplicatesRemoved`, …) |
+| POST | `/newsletters` | `{ name, csv, template_id?, subject?, body?, from_name?, reply_to?, scheduled_at? }` → creates a `draft` (`scheduled_at` is ISO; omit for "send on start") |
+| POST | `/newsletters/{id}/start` | `draft`/`paused` → `sending` now, or `scheduled` if `scheduled_at` is in the future |
+| POST | `/newsletters/{id}/pause` · `/resume` · `/cancel` | state transitions |
+| GET | `/newsletters` · `/newsletters/{id}` | list / detail (`sent`, `failed`, `total`, `failedRecipients[]`) |
+| DELETE | `/newsletters/{id}` | when not `sending` |
+
+```bash
+# validate
+curl -s -X POST "$HOST/api/v1/mailboxes/team%40example.com/newsletters/validate" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d "$(jq -Rs '{csv: ., template_id: "8f3c…"}' < recipients.csv)"
+
+# create + start
+NL=$(curl -s -X POST "$HOST/api/v1/mailboxes/team%40example.com/newsletters" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d "$(jq -Rs '{name:"October", csv:., template_id:"8f3c…"}' < recipients.csv)")
+ID=$(echo "$NL" | jq -r .newsletter.id)
+curl -s -X POST "$HOST/api/v1/mailboxes/team%40example.com/newsletters/$ID/start" -H "$AUTH"
+```
+
+Per recipient the row's columns become the template's placeholder values, the
+template renders, images are hosted (as above), and it's sent from the mailbox
+(`from_name` / `reply_to` optional). Only `template_id` sends skip AI
+verification.
+
+### UI
+
+**Send Newsletter** in the sidebar → upload CSV → validation summary → **Send
+now** / **Schedule** → watch the progress meter and failed-recipient list.
 
 ---
 

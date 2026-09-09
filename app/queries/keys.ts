@@ -27,5 +27,9 @@ export const queryKeys = {
 		list: (mailboxId: string) => ["templates", mailboxId] as const,
 		detail: (mailboxId: string, id: string) => ["templates", mailboxId, id] as const,
 	},
+	newsletters: {
+		list: (mailboxId: string) => ["newsletters", mailboxId] as const,
+		detail: (mailboxId: string, id: string) => ["newsletters", mailboxId, id] as const,
+	},
 	config: ["config"] as const,
 };

@@ -4,11 +4,15 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/durable-sqlite";
-import { eq, and, or, asc, desc, sql } from "drizzle-orm";
+import { eq, ne, and, or, asc, desc, inArray, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders } from "../../shared/folders";
+import { renderTemplate, substitutePlaceholders } from "../../shared/templates";
 import type { Env } from "../types";
+import { sendEmail } from "../email-sender";
+import { resolveAssetBaseUrl, stripHtmlToText } from "../lib/email-helpers";
+import { hostTemplateAssets } from "../lib/templates";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 
 /**
@@ -1040,5 +1044,412 @@ export class MailboxDO extends DurableObject<Env> {
 		if (!row) return null;
 		this.db.delete(schema.templateAssets).where(eq(schema.templateAssets.id, id)).run();
 		return row;
+	}
+
+	// ── Newsletters (bulk send job) ────────────────────────────────
+
+	async listNewsletters() {
+		return this.db
+			.select()
+			.from(schema.newsletters)
+			.orderBy(desc(schema.newsletters.created_at))
+			.all();
+	}
+
+	async getNewsletter(id: string) {
+		const row = this.db
+			.select()
+			.from(schema.newsletters)
+			.where(eq(schema.newsletters.id, id))
+			.get();
+		if (!row) return null;
+		const failedRecipients = this.db
+			.select({
+				email: schema.newsletterRecipients.email,
+				error: schema.newsletterRecipients.error,
+			})
+			.from(schema.newsletterRecipients)
+			.where(
+				and(
+					eq(schema.newsletterRecipients.newsletter_id, id),
+					eq(schema.newsletterRecipients.status, "failed"),
+				),
+			)
+			.limit(100)
+			.all();
+		return { ...row, failedRecipients };
+	}
+
+	async getNewsletterRecipients(
+		id: string,
+		options: { status?: string; limit?: number } = {},
+	) {
+		const conditions = [eq(schema.newsletterRecipients.newsletter_id, id)];
+		if (options.status) {
+			conditions.push(eq(schema.newsletterRecipients.status, options.status));
+		}
+		return this.db
+			.select()
+			.from(schema.newsletterRecipients)
+			.where(and(...conditions))
+			.limit(Math.min(Math.max(options.limit ?? 200, 1), 1000))
+			.all();
+	}
+
+	async createNewsletter(
+		data: {
+			mailboxId: string;
+			name: string;
+			templateId?: string | null;
+			subject?: string | null;
+			body?: string | null;
+			fromName?: string | null;
+			replyTo?: string | null;
+			scheduledAt?: string | null;
+		},
+		recipients: { email: string; vars: Record<string, string> }[],
+	) {
+		const id = crypto.randomUUID();
+		const now = new Date().toISOString();
+		this.ctx.storage.transactionSync(() => {
+			this.db
+				.insert(schema.newsletters)
+				.values({
+					id,
+					mailbox_id: data.mailboxId,
+					name: data.name,
+					status: "draft",
+					template_id: data.templateId ?? null,
+					subject: data.subject ?? null,
+					body: data.body ?? null,
+					from_name: data.fromName ?? null,
+					reply_to: data.replyTo ?? null,
+					total: recipients.length,
+					scheduled_at: data.scheduledAt ?? null,
+					created_at: now,
+					updated_at: now,
+				})
+				.run();
+			// Row-by-row: the DO SQLite driver caps bound parameters per statement,
+			// so a multi-row VALUES insert overflows for any real recipient list.
+			for (const r of recipients) {
+				this.db
+					.insert(schema.newsletterRecipients)
+					.values({
+						id: crypto.randomUUID(),
+						newsletter_id: id,
+						email: r.email,
+						vars: JSON.stringify(r.vars),
+						status: "pending",
+					})
+					.run();
+			}
+		});
+		return this.getNewsletter(id);
+	}
+
+	async startNewsletter(id: string) {
+		const nl = this.db
+			.select()
+			.from(schema.newsletters)
+			.where(eq(schema.newsletters.id, id))
+			.get();
+		if (!nl) return { error: "Newsletter not found" };
+		if (!["draft", "scheduled", "paused"].includes(nl.status)) {
+			return { error: `Cannot start a "${nl.status}" newsletter` };
+		}
+		const otherSending = this.db
+			.select({ id: schema.newsletters.id })
+			.from(schema.newsletters)
+			.where(
+				and(eq(schema.newsletters.status, "sending"), ne(schema.newsletters.id, id)),
+			)
+			.get();
+		if (otherSending) {
+			return { error: "Another newsletter is already sending — wait for it to finish." };
+		}
+		const now = new Date().toISOString();
+		const future =
+			!!nl.scheduled_at && Date.parse(nl.scheduled_at) > Date.now();
+		const status = future ? "scheduled" : "sending";
+		this.db
+			.update(schema.newsletters)
+			.set({
+				status,
+				updated_at: now,
+				started_at:
+					status === "sending" ? (nl.started_at ?? now) : nl.started_at,
+			})
+			.where(eq(schema.newsletters.id, id))
+			.run();
+		await this.#armNewsletterAlarm();
+		return this.getNewsletter(id);
+	}
+
+	async pauseNewsletter(id: string) {
+		return this.#setNewsletterStatus(id, "paused", ["sending", "scheduled"]);
+	}
+
+	async resumeNewsletter(id: string) {
+		const res = this.#setNewsletterStatus(id, "sending", ["paused"]);
+		if (!("error" in res)) await this.#armNewsletterAlarm();
+		return res;
+	}
+
+	async cancelNewsletter(id: string) {
+		const res = this.#setNewsletterStatus(id, "canceled", [
+			"draft",
+			"scheduled",
+			"sending",
+			"paused",
+		]);
+		if (!("error" in res)) await this.#armNewsletterAlarm();
+		return res;
+	}
+
+	async deleteNewsletter(id: string) {
+		const nl = this.db
+			.select({ status: schema.newsletters.status })
+			.from(schema.newsletters)
+			.where(eq(schema.newsletters.id, id))
+			.get();
+		if (!nl) return { error: "Newsletter not found" };
+		if (nl.status === "sending") {
+			return { error: "Cancel the newsletter before deleting it." };
+		}
+		this.ctx.storage.transactionSync(() => {
+			this.db
+				.delete(schema.newsletterRecipients)
+				.where(eq(schema.newsletterRecipients.newsletter_id, id))
+				.run();
+			this.db.delete(schema.newsletters).where(eq(schema.newsletters.id, id)).run();
+		});
+		return { status: "deleted" };
+	}
+
+	#setNewsletterStatus(id: string, status: string, from: string[]) {
+		const nl = this.db
+			.select({ status: schema.newsletters.status })
+			.from(schema.newsletters)
+			.where(eq(schema.newsletters.id, id))
+			.get();
+		if (!nl) return { error: "Newsletter not found" as string };
+		if (!from.includes(nl.status)) {
+			return { error: `Cannot move a "${nl.status}" newsletter to "${status}"` };
+		}
+		this.db
+			.update(schema.newsletters)
+			.set({ status, updated_at: new Date().toISOString() })
+			.where(eq(schema.newsletters.id, id))
+			.run();
+		return { status };
+	}
+
+	/** Set the DO alarm to the earliest time a newsletter needs attention. */
+	async #armNewsletterAlarm() {
+		const active = this.db
+			.select({
+				status: schema.newsletters.status,
+				scheduled_at: schema.newsletters.scheduled_at,
+			})
+			.from(schema.newsletters)
+			.where(inArray(schema.newsletters.status, ["sending", "scheduled"]))
+			.all();
+		let wake: number | null = null;
+		for (const n of active) {
+			const t =
+				n.status === "sending"
+					? Date.now()
+					: n.scheduled_at
+						? Date.parse(n.scheduled_at)
+						: Date.now();
+			wake = wake === null ? t : Math.min(wake, t);
+		}
+		if (wake === null) {
+			await this.ctx.storage.deleteAlarm();
+		} else {
+			await this.ctx.storage.setAlarm(Math.max(wake, Date.now() + 1000));
+		}
+	}
+
+	async alarm() {
+		try {
+			await this.#runNewsletterTick();
+		} catch (e) {
+			console.error("Newsletter alarm failed:", (e as Error).message);
+			// Re-arm so a transient failure doesn't strand the job.
+			await this.ctx.storage.setAlarm(Date.now() + 60_000);
+		}
+	}
+
+	async #runNewsletterTick() {
+		const nowIso = new Date().toISOString();
+		const now = Date.now();
+
+		// Promote scheduled newsletters whose time has come.
+		const scheduled = this.db
+			.select()
+			.from(schema.newsletters)
+			.where(eq(schema.newsletters.status, "scheduled"))
+			.all();
+		for (const n of scheduled) {
+			if (n.scheduled_at && Date.parse(n.scheduled_at) <= now) {
+				this.db
+					.update(schema.newsletters)
+					.set({ status: "sending", started_at: n.started_at ?? nowIso, updated_at: nowIso })
+					.where(eq(schema.newsletters.id, n.id))
+					.run();
+			}
+		}
+
+		const nl = this.db
+			.select()
+			.from(schema.newsletters)
+			.where(eq(schema.newsletters.status, "sending"))
+			.orderBy(asc(schema.newsletters.created_at))
+			.limit(1)
+			.get();
+		if (!nl) {
+			await this.#armNewsletterAlarm();
+			return;
+		}
+
+		const batchSize = Math.max(1, Number(this.env.NEWSLETTER_BATCH_SIZE) || 20);
+		const intervalMs =
+			Math.max(5, Number(this.env.NEWSLETTER_INTERVAL_SECONDS) || 60) * 1000;
+
+		const pending = this.db
+			.select()
+			.from(schema.newsletterRecipients)
+			.where(
+				and(
+					eq(schema.newsletterRecipients.newsletter_id, nl.id),
+					eq(schema.newsletterRecipients.status, "pending"),
+				),
+			)
+			.limit(batchSize)
+			.all();
+
+		if (pending.length === 0) {
+			this.db
+				.update(schema.newsletters)
+				.set({ status: "completed", completed_at: nowIso, updated_at: nowIso })
+				.where(eq(schema.newsletters.id, nl.id))
+				.run();
+			await this.#armNewsletterAlarm();
+			return;
+		}
+
+		const template = nl.template_id
+			? this.db
+					.select()
+					.from(schema.templates)
+					.where(eq(schema.templates.id, nl.template_id))
+					.get()
+			: null;
+		if (nl.template_id && !template) {
+			this.db
+				.update(schema.newsletters)
+				.set({ status: "failed", error: "Template not found", updated_at: nowIso })
+				.where(eq(schema.newsletters.id, nl.id))
+				.run();
+			await this.#armNewsletterAlarm();
+			return;
+		}
+
+		const placeholders = template ? this.#parseTemplate(template).placeholders : [];
+		const baseUrl = resolveAssetBaseUrl(this.env, "");
+		const from = nl.from_name
+			? { email: nl.mailbox_id, name: nl.from_name }
+			: nl.mailbox_id;
+
+		let rateLimited = false;
+		for (const r of pending) {
+			let values: Record<string, string> = {};
+			try {
+				values = JSON.parse(r.vars);
+			} catch {
+				/* keep empty */
+			}
+
+			let subject: string;
+			let html: string;
+			if (template) {
+				const rendered = renderTemplate(
+					{ subject: template.subject, body: template.body, placeholders },
+					values,
+				);
+				html = rendered.html;
+				subject = nl.subject?.trim()
+					? substitutePlaceholders(nl.subject, placeholders, values)
+					: rendered.subject;
+			} else {
+				subject = substitutePlaceholders(nl.subject ?? "", [], values);
+				html = substitutePlaceholders(nl.body ?? "", [], values);
+			}
+			html = hostTemplateAssets(nl.mailbox_id, html, baseUrl);
+			const text = stripHtmlToText(html);
+
+			try {
+				await sendEmail(this.env.EMAIL, {
+					to: r.email,
+					from,
+					subject,
+					html,
+					text,
+					...(nl.reply_to ? { replyTo: nl.reply_to } : {}),
+				});
+				this.db
+					.update(schema.newsletterRecipients)
+					.set({ status: "sent", sent_at: nowIso })
+					.where(eq(schema.newsletterRecipients.id, r.id))
+					.run();
+				this.db
+					.update(schema.newsletters)
+					.set({ sent: sql`${schema.newsletters.sent} + 1`, updated_at: nowIso })
+					.where(eq(schema.newsletters.id, nl.id))
+					.run();
+			} catch (e) {
+				const msg = (e as Error).message || "send failed";
+				if (/\brate\b|too many|quota|429/i.test(msg)) {
+					rateLimited = true;
+					break;
+				}
+				this.db
+					.update(schema.newsletterRecipients)
+					.set({ status: "failed", error: msg.slice(0, 500) })
+					.where(eq(schema.newsletterRecipients.id, r.id))
+					.run();
+				this.db
+					.update(schema.newsletters)
+					.set({ failed: sql`${schema.newsletters.failed} + 1`, updated_at: nowIso })
+					.where(eq(schema.newsletters.id, nl.id))
+					.run();
+			}
+		}
+
+		const remaining = this.db
+			.select({ c: sql<number>`count(*)` })
+			.from(schema.newsletterRecipients)
+			.where(
+				and(
+					eq(schema.newsletterRecipients.newsletter_id, nl.id),
+					eq(schema.newsletterRecipients.status, "pending"),
+				),
+			)
+			.get();
+
+		if ((remaining?.c ?? 0) > 0) {
+			await this.ctx.storage.setAlarm(
+				Date.now() + (rateLimited ? intervalMs * 5 : intervalMs),
+			);
+		} else {
+			this.db
+				.update(schema.newsletters)
+				.set({ status: "completed", completed_at: nowIso, updated_at: nowIso })
+				.where(eq(schema.newsletters.id, nl.id))
+				.run();
+			await this.#armNewsletterAlarm();
+		}
 	}
 }

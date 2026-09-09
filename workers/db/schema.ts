@@ -63,3 +63,38 @@ export const templateAssets = sqliteTable("template_assets", {
 	content_id: text("content_id").notNull(),
 	created_at: text("created_at").notNull(),
 });
+
+/** A bulk "Send Newsletter" job (see workers/lib/newsletter.ts). */
+export const newsletters = sqliteTable("newsletters", {
+	id: text("id").primaryKey(),
+	// the mailbox address this DO belongs to (constant per DO, stored for the alarm)
+	mailbox_id: text("mailbox_id").notNull(),
+	name: text("name").notNull(),
+	// draft | scheduled | sending | paused | completed | canceled | failed
+	status: text("status").notNull().default("draft"),
+	template_id: text("template_id"),
+	subject: text("subject"),
+	body: text("body"),
+	from_name: text("from_name"),
+	reply_to: text("reply_to"),
+	total: integer("total").notNull().default(0),
+	sent: integer("sent").notNull().default(0),
+	failed: integer("failed").notNull().default(0),
+	scheduled_at: text("scheduled_at"),
+	started_at: text("started_at"),
+	completed_at: text("completed_at"),
+	error: text("error"),
+	created_at: text("created_at").notNull(),
+	updated_at: text("updated_at").notNull(),
+});
+
+export const newsletterRecipients = sqliteTable("newsletter_recipients", {
+	id: text("id").primaryKey(),
+	newsletter_id: text("newsletter_id").notNull(),
+	email: text("email").notNull(),
+	// JSON: { placeholderKey: value } — only columns matching template placeholders
+	vars: text("vars").notNull().default("{}"),
+	status: text("status").notNull().default("pending"), // pending | sent | failed
+	error: text("error"),
+	sent_at: text("sent_at"),
+});

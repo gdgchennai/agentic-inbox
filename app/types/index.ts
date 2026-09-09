@@ -72,3 +72,46 @@ export interface TemplateAssetUpload {
 	contentId: string;
 	url: string;
 }
+
+export type NewsletterStatus =
+	| "draft"
+	| "scheduled"
+	| "sending"
+	| "paused"
+	| "completed"
+	| "canceled"
+	| "failed";
+
+export interface Newsletter {
+	id: string;
+	name: string;
+	status: NewsletterStatus;
+	template_id: string | null;
+	subject: string | null;
+	body: string | null;
+	from_name: string | null;
+	reply_to: string | null;
+	total: number;
+	sent: number;
+	failed: number;
+	scheduled_at: string | null;
+	started_at: string | null;
+	completed_at: string | null;
+	error: string | null;
+	created_at: string;
+	updated_at: string;
+	failedRecipients?: { email: string; error: string | null }[];
+}
+
+export interface NewsletterCsvValidation {
+	ok: boolean;
+	headers: string[];
+	requiredKeys: string[];
+	missingKeys: string[];
+	totalRows: number;
+	validCount: number;
+	skippedInvalid: number;
+	invalidSample: string[];
+	duplicatesRemoved: number;
+	tooManyRecipients: boolean;
+}

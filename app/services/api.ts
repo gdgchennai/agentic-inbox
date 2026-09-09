@@ -7,6 +7,8 @@ import type {
 	EmailTemplate,
 	Folder,
 	Mailbox,
+	Newsletter,
+	NewsletterCsvValidation,
 	TemplateAssetUpload,
 } from "~/types";
 
@@ -190,6 +192,47 @@ const api = {
 			{ content, filename: file.name, type: file.type || "application/octet-stream" },
 		);
 	},
+
+	// Newsletters
+	listNewsletters: (mailboxId: string) =>
+		get<Newsletter[]>(`/api/v1/mailboxes/${mailboxId}/newsletters`),
+	getNewsletter: (mailboxId: string, id: string) =>
+		get<Newsletter>(`/api/v1/mailboxes/${mailboxId}/newsletters/${id}`),
+	validateNewsletterCsv: (
+		mailboxId: string,
+		data: { csv: string; template_id?: string },
+	) =>
+		post<NewsletterCsvValidation>(
+			`/api/v1/mailboxes/${mailboxId}/newsletters/validate`,
+			data,
+		),
+	createNewsletter: (
+		mailboxId: string,
+		data: {
+			name: string;
+			csv: string;
+			template_id?: string;
+			subject?: string;
+			body?: string;
+			from_name?: string;
+			reply_to?: string;
+			scheduled_at?: string;
+		},
+	) =>
+		post<{ newsletter: Newsletter; skippedInvalid: number; duplicatesRemoved: number }>(
+			`/api/v1/mailboxes/${mailboxId}/newsletters`,
+			data,
+		),
+	startNewsletter: (mailboxId: string, id: string) =>
+		post<Newsletter>(`/api/v1/mailboxes/${mailboxId}/newsletters/${id}/start`),
+	pauseNewsletter: (mailboxId: string, id: string) =>
+		post<{ status: string }>(`/api/v1/mailboxes/${mailboxId}/newsletters/${id}/pause`),
+	resumeNewsletter: (mailboxId: string, id: string) =>
+		post<{ status: string }>(`/api/v1/mailboxes/${mailboxId}/newsletters/${id}/resume`),
+	cancelNewsletter: (mailboxId: string, id: string) =>
+		post<{ status: string }>(`/api/v1/mailboxes/${mailboxId}/newsletters/${id}/cancel`),
+	deleteNewsletter: (mailboxId: string, id: string) =>
+		del<void>(`/api/v1/mailboxes/${mailboxId}/newsletters/${id}`),
 };
 
 /** Read a File as a base64 string (no data: prefix). */

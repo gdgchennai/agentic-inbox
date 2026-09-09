@@ -128,3 +128,26 @@ export const SendEmailResponseSchema = z.object({
 	id: z.string(),
 	status: z.string(),
 });
+
+// ── Newsletters ──────────────────────────────────────────────────
+
+export const NewsletterValidateSchema = z.object({
+	csv: z.string(),
+	template_id: z.string().optional(),
+});
+
+export const NewsletterCreateSchema = z
+	.object({
+		name: z.string().min(1),
+		csv: z.string().min(1),
+		template_id: z.string().optional(),
+		subject: z.string().optional(),
+		body: z.string().optional(),
+		from_name: z.string().optional(),
+		reply_to: z.string().email().optional(),
+		// ISO datetime; omitted / past = send on start
+		scheduled_at: z.string().datetime().optional(),
+	})
+	.refine((d) => d.template_id || d.body, {
+		message: "Provide a 'template_id' or a 'body'",
+	});

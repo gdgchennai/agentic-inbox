@@ -25,7 +25,12 @@
 		// Point this Worker's route at that hostname and leave it OUT of any
 		// Cloudflare Access app — the Worker only serves /assets/t/* there.
 		// Preferred over PUBLIC_URL for image <src> when set.
-		"ASSET_URL": "https://mail-attachments.gdgchennai.in"
+		"ASSET_URL": "https://mail-attachments.gdgchennai.in",
+		// Newsletter (bulk send) pacing. Sends run in a background alarm loop:
+		// NEWSLETTER_BATCH_SIZE emails every NEWSLETTER_INTERVAL_SECONDS.
+		// Defaults (20 / 60s ≈ 1,200/hr) apply when unset.
+		"NEWSLETTER_BATCH_SIZE": "20",
+		"NEWSLETTER_INTERVAL_SECONDS": "60"
 	},
 	"send_email": [
 		{

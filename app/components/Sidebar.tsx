@@ -178,6 +178,13 @@ export default function Sidebar() {
 					onClick={handleNavClick}
 				/>
 
+				<FolderLink
+					to={`/mailbox/${mailboxId}/newsletter`}
+					icon={<PaperPlaneTiltIcon size={18} weight="regular" />}
+					label="Send Newsletter"
+					onClick={handleNavClick}
+				/>
+
 				{/* Custom folders */}
 				{customFolders.length > 0 && (
 					<div className="pt-5">
