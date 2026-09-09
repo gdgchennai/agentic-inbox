@@ -242,10 +242,12 @@ export function useSaveDraft() {
 				cc?: string;
 				bcc?: string;
 				subject?: string;
-				body: string;
+				body?: string;
 				in_reply_to?: string;
 				thread_id?: string;
 				draft_id?: string;
+				template_id?: string;
+				placeholders?: Record<string, string>;
 			};
 		}) => api.saveDraft(mailboxId, draft),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),

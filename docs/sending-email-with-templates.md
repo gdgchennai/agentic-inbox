@@ -129,10 +129,12 @@ Response:
 <img data-asset-id="1b2c…" alt="Banner">
 ```
 
-At send time the Worker replaces that `<img>` with `<img src="cid:tpl-1b2c…">`
-and attaches the image inline. An `<img src="…/templates/assets/<id>">` URL is
-also recognized. Images inside a placeholder value that point at an **external**
-`https://` URL are left as‑is (hosted).
+At send time the Worker replaces that `<img>` with
+`<img src="cid:<assetId>@<mailbox-domain>">` and attaches the image inline
+(`Content-ID: <<assetId>@<mailbox-domain>>`). An
+`<img src="…/templates/assets/<id>">` URL is also recognized. Images inside a
+placeholder value that point at an **external** `https://` URL are left as‑is
+(hosted).
 
 Other asset routes: `GET .../templates/assets/{assetId}` (raw bytes, for
 previews), `DELETE .../templates/assets/{assetId}` (`204`).

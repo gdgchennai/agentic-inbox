@@ -21,7 +21,7 @@ import {
 	TemplateUpdateSchema,
 	TemplateAssetBodySchema,
 } from "./lib/schemas";
-import { buildSendBody } from "./lib/templates";
+import { buildSendBody, renderTemplateForDraft } from "./lib/templates";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
@@ -42,10 +42,12 @@ const DraftBody = z.object({
 	cc: z.string().optional(),
 	bcc: z.string().optional(),
 	subject: z.string().optional(),
-	body: z.string(),
+	body: z.string().optional(),
 	in_reply_to: z.string().optional(),
 	thread_id: z.string().optional(),
 	draft_id: z.string().optional(),
+	template_id: z.string().optional(),
+	placeholders: z.record(z.string()).optional(),
 });
 
 // -- Helpers --------------------------------------------------------
@@ -223,18 +225,28 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 
 app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
 	const mailboxId = c.req.param("mailboxId")!;
-	const { to, cc, bcc, subject, body, in_reply_to, thread_id, draft_id } = DraftBody.parse(await c.req.json());
+	const { to, cc, bcc, subject, body, in_reply_to, thread_id, draft_id, template_id, placeholders } = DraftBody.parse(await c.req.json());
+
+	let finalBody = body ?? "";
+	let finalSubject = subject ?? "";
+	if (template_id) {
+		const rendered = await renderTemplateForDraft(c.env, mailboxId, template_id, placeholders ?? {});
+		if ("error" in rendered) return c.json({ error: rendered.error }, 404);
+		finalBody = rendered.html;
+		if (!finalSubject) finalSubject = rendered.subject;
+	}
+
 	const stub = c.var.mailboxStub;
 	if (draft_id) await stub.deleteEmail(draft_id); // not atomic — create-then-delete would be safer
 	const messageId = crypto.randomUUID();
 	const now = new Date().toISOString();
 	await stub.createEmail(Folders.DRAFT, {
-		id: messageId, subject: subject || "", sender: mailboxId.toLowerCase(),
+		id: messageId, subject: finalSubject, sender: mailboxId.toLowerCase(),
 		recipient: (to || "").toLowerCase(), cc: cc?.toLowerCase() || null, bcc: bcc?.toLowerCase() || null,
-		date: now, body, in_reply_to: in_reply_to || null, email_references: null,
+		date: now, body: finalBody, in_reply_to: in_reply_to || null, email_references: null,
 		thread_id: thread_id || in_reply_to || messageId,
 	}, []);
-	return c.json({ id: messageId, status: "draft", subject: subject || "", recipient: to || "", date: now }, 201);
+	return c.json({ id: messageId, status: "draft", subject: finalSubject, recipient: to || "", date: now }, 201);
 });
 
 app.get("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {

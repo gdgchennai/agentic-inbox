@@ -103,3 +103,13 @@ export function extractTokenKeys(
 	}
 	return [...keys];
 }
+
+/**
+ * Heuristic: this HTML is a full/table-based email template that a rich-text
+ * (WYSIWYG) editor would mangle. Such bodies should be shown as a read-only
+ * preview and sent verbatim, not loaded into the editor.
+ */
+export function isRawEmailHtml(html: string | null | undefined): boolean {
+	if (!html) return false;
+	return /<table|<style|<!--|\sstyle=|<head\b|<body\b|<!doctype/i.test(html);
+}

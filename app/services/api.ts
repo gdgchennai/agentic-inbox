@@ -142,10 +142,12 @@ const api = {
 			cc?: string;
 			bcc?: string;
 			subject?: string;
-			body: string;
+			body?: string;
 			in_reply_to?: string;
 			thread_id?: string;
 			draft_id?: string;
+			template_id?: string;
+			placeholders?: Record<string, string>;
 		},
 	) => post<{ draft_id: string }>(`/api/v1/mailboxes/${mailboxId}/drafts`, draft),
 	replyToEmail: (mailboxId: string, emailId: string, email: unknown) =>

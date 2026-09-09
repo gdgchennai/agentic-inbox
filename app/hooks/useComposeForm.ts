@@ -5,6 +5,11 @@
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+	isRawEmailHtml,
+	renderTemplate,
+	type EmailTemplate,
+} from "shared/templates";
+import {
 	buildQuotedReplyBlock,
 	escapeHtml,
 	formatComposeDate,
@@ -178,6 +183,15 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 	const [showCcBcc, setShowCcBcc] = useState(false);
 	const [subject, setSubject] = useState("");
 	const [body, setBody] = useState("");
+	/** Set when a template is chosen in the composer — sent server-side, not editable here. */
+	const [appliedTemplate, setAppliedTemplate] = useState<{
+		id: string;
+		name: string;
+		values: Record<string, string>;
+		html: string;
+	} | null>(null);
+	/** True when the body is raw email HTML (e.g. a reopened template draft) — preview only. */
+	const [bodyIsRawHtml, setBodyIsRawHtml] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [isSavingDraft, setIsSavingDraft] = useState(false);
 	const [isSending, setIsSending] = useState(false);
@@ -207,7 +221,24 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		setShowCcBcc(initialFields.showCcBcc);
 		setSubject(initialFields.subject);
 		setBody(initialFields.body);
+		setAppliedTemplate(null);
+		setBodyIsRawHtml(isRawEmailHtml(initialFields.body));
 	}, [composeOptions, currentMailbox?.email, sigBlock]);
+
+	const applyTemplate = (template: EmailTemplate, values: Record<string, string>) => {
+		const rendered = renderTemplate(template, values);
+		setAppliedTemplate({ id: template.id, name: template.name, values, html: rendered.html });
+		if (rendered.subject) setSubject(rendered.subject);
+	};
+
+	const clearTemplate = () => setAppliedTemplate(null);
+
+	/** HTML shown in the read-only preview (template render, or a raw-HTML draft body). */
+	const previewHtml = appliedTemplate
+		? appliedTemplate.html
+		: bodyIsRawHtml
+			? body
+			: null;
 
 	const handleSaveDraft = async () => {
 		if (!mailboxId || isSending) return; setIsSavingDraft(true); setError(null);
@@ -217,7 +248,9 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 				cc: cc || undefined,
 				bcc: bcc || undefined,
 				subject,
-				body,
+				...(appliedTemplate
+					? { template_id: appliedTemplate.id, placeholders: appliedTemplate.values }
+					: { body }),
 				in_reply_to: composeOptions.originalEmail?.id || composeOptions.draftEmail?.in_reply_to || undefined,
 				thread_id: composeOptions.originalEmail?.thread_id || composeOptions.draftEmail?.thread_id || undefined,
 				draft_id: composeOptions.draftEmail?.id || undefined,
@@ -246,8 +279,9 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 			bcc: toEmailListValue(bccRecipients),
 			from,
 			subject,
-			html: body,
-			text: htmlToPlainText(body),
+			...(appliedTemplate
+				? { template_id: appliedTemplate.id, placeholders: appliedTemplate.values }
+				: { html: body, text: htmlToPlainText(body) }),
 		};
 		const draftId = composeOptions.draftEmail?.id; const mode = composeOptions.mode; const originalId = composeOptions.originalEmail?.id || composeOptions.draftEmail?.in_reply_to;
 		setIsSending(true); toastManager.add({ title: "Sending email..." });
@@ -262,5 +296,5 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		finally { setIsSending(false); }
 	};
 
-	return { to, setTo, cc, setCc, bcc, setBcc, showCcBcc, setShowCcBcc, subject, setSubject, body, setBody, error, setError, isSavingDraft, isSending, formTitle, handleSaveDraft, handleSend, closeCompose, closePanel };
+	return { to, setTo, cc, setCc, bcc, setBcc, showCcBcc, setShowCcBcc, subject, setSubject, body, setBody, error, setError, isSavingDraft, isSending, formTitle, handleSaveDraft, handleSend, closeCompose, closePanel, appliedTemplate, applyTemplate, clearTemplate, previewHtml };
 }

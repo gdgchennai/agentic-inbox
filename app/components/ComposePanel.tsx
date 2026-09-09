@@ -9,6 +9,7 @@ import { useComposeForm } from "~/hooks/useComposeForm";
 import api from "~/services/api";
 import RichTextEditor from "./RichTextEditor";
 import TemplatePicker from "./TemplatePicker";
+import TemplatePreview from "./TemplatePreview";
 
 export default function ComposePanel() {
 	const { mailboxId, folder } = useParams<{
@@ -37,6 +38,10 @@ export default function ComposePanel() {
 		handleSend,
 		closeCompose,
 		closePanel,
+		appliedTemplate,
+		applyTemplate,
+		clearTemplate,
+		previewHtml,
 	} = useComposeForm(mailboxId, folder);
 
 	return (
@@ -144,26 +149,33 @@ export default function ComposePanel() {
 
 					<TemplatePicker
 						mailboxId={mailboxId}
-						subject={subject}
-						setSubject={setSubject}
-						body={body}
-						setBody={setBody}
+						applyTemplate={applyTemplate}
+						appliedTemplateId={appliedTemplate?.id}
+						onClear={clearTemplate}
 					/>
 
-					<div className="border border-kumo-line rounded-md overflow-hidden bg-kumo-base">
-						<RichTextEditor
-							value={body}
-							onChange={setBody}
-							onImageUpload={
-								mailboxId
-									? async (file) => {
-											const res = await api.uploadTemplateAsset(mailboxId, file);
-											return { url: res.url, assetId: res.id };
-										}
-									: undefined
-							}
+					{previewHtml ? (
+						<TemplatePreview
+							html={previewHtml}
+							name={appliedTemplate?.name}
+							onRemove={appliedTemplate ? clearTemplate : undefined}
 						/>
-					</div>
+					) : (
+						<div className="border border-kumo-line rounded-md overflow-hidden bg-kumo-base">
+							<RichTextEditor
+								value={body}
+								onChange={setBody}
+								onImageUpload={
+									mailboxId
+										? async (file) => {
+												const res = await api.uploadTemplateAsset(mailboxId, file);
+												return { url: res.url, assetId: res.id };
+											}
+										: undefined
+								}
+							/>
+						</div>
+					)}
 				</div>
 
 				{/* Footer actions */}

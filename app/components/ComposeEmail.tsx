@@ -9,6 +9,7 @@ import { useComposeForm } from "~/hooks/useComposeForm";
 import api from "~/services/api";
 import RichTextEditor from "./RichTextEditor";
 import TemplatePicker from "./TemplatePicker";
+import TemplatePreview from "./TemplatePreview";
 import { useUIStore } from "~/hooks/useUIStore";
 
 export default function ComposeEmail() {
@@ -38,6 +39,10 @@ export default function ComposeEmail() {
 		formTitle,
 		handleSaveDraft,
 		handleSend,
+		appliedTemplate,
+		applyTemplate,
+		clearTemplate,
+		previewHtml,
 	} = useComposeForm(mailboxId, folder);
 
 	const handleImageUpload = mailboxId
@@ -112,21 +117,28 @@ export default function ComposeEmail() {
 
 					<TemplatePicker
 						mailboxId={mailboxId}
-						subject={subject}
-						setSubject={setSubject}
-						body={body}
-						setBody={setBody}
+						applyTemplate={applyTemplate}
+						appliedTemplateId={appliedTemplate?.id}
+						onClear={clearTemplate}
 					/>
 
 					<div>
 						<Text size="sm" DANGEROUS_className="font-medium mb-1.5 block">
 							Message
 						</Text>
-						<RichTextEditor
-							value={body}
-							onChange={setBody}
-							onImageUpload={handleImageUpload}
-						/>
+						{previewHtml ? (
+							<TemplatePreview
+								html={previewHtml}
+								name={appliedTemplate?.name}
+								onRemove={appliedTemplate ? clearTemplate : undefined}
+							/>
+						) : (
+							<RichTextEditor
+								value={body}
+								onChange={setBody}
+								onImageUpload={handleImageUpload}
+							/>
+						)}
 					</div>
 					<div className="flex justify-between items-center pt-2">
 						<Button

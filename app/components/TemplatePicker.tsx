@@ -4,30 +4,29 @@
 
 /**
  * Template selector for the composer. Lists the mailbox's saved templates,
- * prompts for any `{{placeholder}}` values, and renders the template into
- * the subject + body via the shared `renderTemplate`. Images keep their
- * `data-asset-id` so the Worker inlines them as CID attachments on send.
+ * collects `{{placeholder}}` values, and hands them to the compose form via
+ * `applyTemplate`. The form then sends `template_id` + `placeholders` to the
+ * API, which renders the template server-side (layout + images preserved) —
+ * the composer never runs template HTML through the rich-text editor.
  */
 
 import { Button, Text } from "@cloudflare/kumo";
 import { useMemo, useState } from "react";
-import { extractTokenKeys, renderTemplate } from "shared/templates";
+import { extractTokenKeys, type EmailTemplate } from "shared/templates";
 import { useTemplates } from "~/queries/templates";
 
 interface TemplatePickerProps {
 	mailboxId: string | undefined;
-	subject: string;
-	setSubject: (v: string) => void;
-	body: string;
-	setBody: (v: string) => void;
+	applyTemplate: (template: EmailTemplate, values: Record<string, string>) => void;
+	appliedTemplateId?: string;
+	onClear: () => void;
 }
 
 export default function TemplatePicker({
 	mailboxId,
-	subject,
-	setSubject,
-	body,
-	setBody,
+	applyTemplate,
+	appliedTemplateId,
+	onClear,
 }: TemplatePickerProps) {
 	const { data: templates } = useTemplates(mailboxId);
 	const [templateId, setTemplateId] = useState("");
@@ -46,12 +45,7 @@ export default function TemplatePicker({
 
 	if (!templates || templates.length === 0) return null;
 
-	const apply = () => {
-		if (!selected) return;
-		const rendered = renderTemplate(selected, values);
-		if (rendered.subject && !subject.trim()) setSubject(rendered.subject);
-		setBody(rendered.html + (body || ""));
-	};
+	const appliedName = templates.find((t) => t.id === appliedTemplateId)?.name;
 
 	return (
 		<div className="rounded-lg border border-kumo-line bg-kumo-recessed p-3 space-y-2">
@@ -79,11 +73,12 @@ export default function TemplatePicker({
 					variant="secondary"
 					size="xs"
 					disabled={!selected}
-					onClick={apply}
+					onClick={() => selected && applyTemplate(selected, values)}
 				>
-					Insert
+					{appliedTemplateId && appliedTemplateId === templateId ? "Update" : "Insert"}
 				</Button>
 			</div>
+
 			{keys.map((key) => {
 				const def = selected?.placeholders?.find((p) => p.key === key);
 				return (
@@ -100,6 +95,21 @@ export default function TemplatePicker({
 					</label>
 				);
 			})}
+
+			{appliedTemplateId && (
+				<div className="flex items-center justify-between text-xs text-kumo-subtle pt-1">
+					<span>
+						Applied: <strong>{appliedName}</strong> — sent as designed
+					</span>
+					<button
+						type="button"
+						onClick={onClear}
+						className="text-kumo-link hover:text-kumo-link-hover font-medium"
+					>
+						Remove
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }

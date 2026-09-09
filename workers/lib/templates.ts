@@ -60,10 +60,36 @@ const ASSET_ID_ATTR_RE = /\bdata-asset-id\s*=\s*["']([^"']+)["']/i;
 // Also recognise assets referenced by their in-app URL.
 const ASSET_URL_RE = /\/templates\/assets\/([0-9a-f-]{36})/i;
 
+const MIME_EXT: Record<string, string> = {
+	"image/png": "png",
+	"image/jpeg": "jpg",
+	"image/jpg": "jpg",
+	"image/gif": "gif",
+	"image/webp": "webp",
+	"image/svg+xml": "svg",
+	"image/avif": "avif",
+};
+
+/**
+ * A clean attachment filename. Keeps a simple original name, otherwise
+ * synthesizes one (some stored names carry upload junk / odd characters
+ * that strict mail clients dislike).
+ */
+function attachmentFilename(name: string, mimetype: string, assetId: string): string {
+	const base = (name.split(/[/\\]/).pop() || "").replace(/[^\w.\-]/g, "_");
+	if (/^[\w.\-]{1,40}\.[a-z0-9]{2,4}$/i.test(base)) return base;
+	return `image-${assetId.slice(0, 8)}.${MIME_EXT[mimetype] || "png"}`;
+}
+
 /**
  * Replace `<img data-asset-id="…">` (or an img whose src points at the
  * in-app `/templates/assets/<id>` route) with `<img src="cid:…">` and
  * return the matching inline attachments.
+ *
+ * The `Content-ID` is generated here as `<assetId>@<mailbox domain>` — a
+ * well-formed RFC 2822 msg-id. Gmail (and others) silently refuse to link
+ * `cid:` references whose Content-ID lacks an `@`, which is why images sent
+ * with a bare id did not render.
  */
 export async function inlineTemplateAssets(
 	env: Env,
@@ -73,44 +99,46 @@ export async function inlineTemplateAssets(
 	if (!html || !html.includes("<img")) return { html, attachments: [] };
 
 	const stub = getMailboxStub(env, mailboxId) as unknown as TemplateStub;
+	const domain = mailboxId.split("@")[1] || "templates.local";
 	const attachments: InlineAttachment[] = [];
-	const seen = new Set<string>();
+	const cidByAsset = new Map<string, string>();
+	const rewrites: Array<{ from: string; to: string }> = [];
 
-	const tags = [...html.matchAll(IMG_TAG_RE)];
-	let result = html;
-
-	for (const match of tags) {
+	for (const match of html.matchAll(IMG_TAG_RE)) {
 		const attrs = match[1];
 		const assetId =
 			attrs.match(ASSET_ID_ATTR_RE)?.[1] || attrs.match(ASSET_URL_RE)?.[1];
 		if (!assetId) continue;
 
-		const asset = await stub.getTemplateAsset(assetId);
-		if (!asset) continue;
-
-		if (!seen.has(assetId)) {
-			seen.add(assetId);
-			const key = `template-assets/${mailboxId}/${assetId}/${asset.filename}`;
-			const obj = await env.BUCKET.get(key);
+		let contentId = cidByAsset.get(assetId);
+		if (!contentId) {
+			const asset = await stub.getTemplateAsset(assetId);
+			if (!asset) continue;
+			const obj = await env.BUCKET.get(
+				`template-assets/${mailboxId}/${assetId}/${asset.filename}`,
+			);
 			if (!obj) continue;
+			contentId = `${assetId}@${domain}`;
+			cidByAsset.set(assetId, contentId);
 			attachments.push({
 				content: arrayBufferToBase64(await obj.arrayBuffer()),
-				filename: asset.filename,
+				filename: attachmentFilename(asset.filename, asset.mimetype, assetId),
 				type: asset.mimetype,
 				disposition: "inline",
-				contentId: asset.content_id,
+				contentId,
 			});
 		}
 
-		// Rewrite this specific tag: drop any existing src / data-asset-id,
-		// then point src at the cid.
+		// Drop any existing src / data-asset-id, then point src at the cid.
 		const rewritten = `<img${attrs
 			.replace(/\bsrc\s*=\s*["'][^"']*["']/i, "")
 			.replace(ASSET_ID_ATTR_RE, "")
-			.trimEnd()} src="cid:${asset.content_id}">`;
-		result = result.replace(match[0], rewritten);
+			.replace(/\s+$/, "")} src="cid:${contentId}">`;
+		rewrites.push({ from: match[0], to: rewritten });
 	}
 
+	let result = html;
+	for (const { from, to } of rewrites) result = result.split(from).join(to);
 	return { html: result, attachments };
 }
 
@@ -133,7 +161,9 @@ export async function resolveTemplateForSend(
 ): Promise<ResolvedTemplateSend | { error: string }> {
 	const stub = getMailboxStub(env, mailboxId) as unknown as TemplateStub;
 	const template = await stub.getTemplate(templateId);
-	if (!template) return { error: `Template "${templateId}" not found` };
+	if (!template) {
+		return { error: `Template "${templateId}" not found in mailbox "${mailboxId}"` };
+	}
 
 	const { subject, html: renderedHtml } = renderTemplate(template, values);
 	const { html, attachments } = await inlineTemplateAssets(env, mailboxId, renderedHtml);
@@ -154,7 +184,9 @@ export async function renderTemplateForDraft(
 ): Promise<{ subject: string; html: string } | { error: string }> {
 	const stub = getMailboxStub(env, mailboxId) as unknown as TemplateStub;
 	const template = await stub.getTemplate(templateId);
-	if (!template) return { error: `Template "${templateId}" not found` };
+	if (!template) {
+		return { error: `Template "${templateId}" not found in mailbox "${mailboxId}"` };
+	}
 	return renderTemplate(template, values);
 }
 
