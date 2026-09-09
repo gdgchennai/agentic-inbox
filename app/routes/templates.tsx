@@ -4,7 +4,9 @@
 
 import { Badge, Banner, Button, Input, Loader, Text, useKumoToastManager } from "@cloudflare/kumo";
 import {
+	CheckIcon,
 	CodeIcon,
+	CopyIcon,
 	ImageIcon,
 	PlusIcon,
 	SquaresFourIcon,
@@ -82,6 +84,17 @@ export default function TemplatesRoute() {
 	const [mounted, setMounted] = useState(false);
 
 	useEffect(() => setMounted(true), []);
+
+	const [copiedId, setCopiedId] = useState<string | null>(null);
+	const copyId = async (id: string) => {
+		try {
+			await navigator.clipboard.writeText(id);
+			setCopiedId(id);
+			setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500);
+		} catch {
+			toast.add({ title: "Couldn't copy to clipboard", variant: "error" });
+		}
+	};
 
 	const bodyTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const htmlImageInputRef = useRef<HTMLInputElement>(null);
@@ -256,6 +269,21 @@ export default function TemplatesRoute() {
 					{error && <Banner variant="error" text={error} />}
 
 					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
+						{draft.id && (
+							<button
+								type="button"
+								onClick={() => copyId(draft.id!)}
+								title="Copy template ID"
+								className="flex items-center gap-1.5 font-mono text-[11px] text-kumo-subtle hover:text-kumo-default"
+							>
+								<span>ID {draft.id}</span>
+								{copiedId === draft.id ? (
+									<CheckIcon size={12} weight="bold" className="text-kumo-link" />
+								) : (
+									<CopyIcon size={12} />
+								)}
+							</button>
+						)}
 						<Input
 							label="Name"
 							value={draft.name}
@@ -463,6 +491,19 @@ export default function TemplatesRoute() {
 								<div className="text-xs text-kumo-subtle truncate">
 									{t.subject || "(no subject)"}
 								</div>
+								<button
+									type="button"
+									onClick={() => copyId(t.id)}
+									title="Copy template ID"
+									className="mt-1 flex items-center gap-1 font-mono text-[11px] text-kumo-subtle hover:text-kumo-default max-w-full"
+								>
+									<span className="truncate">{t.id}</span>
+									{copiedId === t.id ? (
+										<CheckIcon size={11} weight="bold" className="shrink-0 text-kumo-link" />
+									) : (
+										<CopyIcon size={11} className="shrink-0" />
+									)}
+								</button>
 							</div>
 							<div className="flex items-center gap-2 shrink-0">
 								{(t.placeholders?.length ?? 0) > 0 && (
