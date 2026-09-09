@@ -6,7 +6,9 @@ import { Banner, Button, Input } from "@cloudflare/kumo";
 import { FloppyDiskIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
 import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
+import api from "~/services/api";
 import RichTextEditor from "./RichTextEditor";
+import TemplatePicker from "./TemplatePicker";
 
 export default function ComposePanel() {
 	const { mailboxId, folder } = useParams<{
@@ -140,10 +142,26 @@ export default function ComposePanel() {
 						</div>
 					</div>
 
+					<TemplatePicker
+						mailboxId={mailboxId}
+						subject={subject}
+						setSubject={setSubject}
+						body={body}
+						setBody={setBody}
+					/>
+
 					<div className="border border-kumo-line rounded-md overflow-hidden bg-kumo-base">
 						<RichTextEditor
 							value={body}
 							onChange={setBody}
+							onImageUpload={
+								mailboxId
+									? async (file) => {
+											const res = await api.uploadTemplateAsset(mailboxId, file);
+											return { url: res.url, assetId: res.id };
+										}
+									: undefined
+							}
 						/>
 					</div>
 				</div>

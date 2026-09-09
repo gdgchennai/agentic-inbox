@@ -4,13 +4,11 @@
 
 import { Banner, Button, Dialog, Input, Text } from "@cloudflare/kumo";
 import { FloppyDiskIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
-import { useMemo, useState } from "react";
 import { useParams } from "react-router";
-import { extractTokenKeys, renderTemplate } from "shared/templates";
 import { useComposeForm } from "~/hooks/useComposeForm";
-import { useTemplates } from "~/queries/templates";
 import api from "~/services/api";
 import RichTextEditor from "./RichTextEditor";
+import TemplatePicker from "./TemplatePicker";
 import { useUIStore } from "~/hooks/useUIStore";
 
 export default function ComposeEmail() {
@@ -42,22 +40,6 @@ export default function ComposeEmail() {
 		handleSend,
 	} = useComposeForm(mailboxId, folder);
 
-	const { data: templates } = useTemplates(mailboxId);
-	const [templateId, setTemplateId] = useState("");
-	const [placeholderValues, setPlaceholderValues] = useState<Record<string, string>>({});
-
-	const selectedTemplate = useMemo(
-		() => templates?.find((t) => t.id === templateId),
-		[templates, templateId],
-	);
-
-	const templateKeys = useMemo(() => {
-		if (!selectedTemplate) return [] as string[];
-		const declared = selectedTemplate.placeholders?.map((p) => p.key) ?? [];
-		const detected = extractTokenKeys(selectedTemplate);
-		return [...new Set([...declared, ...detected])];
-	}, [selectedTemplate]);
-
 	const handleImageUpload = mailboxId
 		? async (file: File) => {
 				const res = await api.uploadTemplateAsset(mailboxId, file);
@@ -65,23 +47,10 @@ export default function ComposeEmail() {
 			}
 		: undefined;
 
-	const applyTemplate = () => {
-		if (!selectedTemplate) return;
-		const rendered = renderTemplate(selectedTemplate, placeholderValues);
-		if (rendered.subject && !subject.trim()) setSubject(rendered.subject);
-		setBody(rendered.html + (body || ""));
-	};
-
 	return (
 		<Dialog.Root
 			open={isComposeModalOpen}
-			onOpenChange={(open) => {
-				if (!open && !isSending) {
-					setTemplateId("");
-					setPlaceholderValues({});
-					closeComposeModal();
-				}
-			}}
+			onOpenChange={(open) => !open && !isSending && closeComposeModal()}
 		>
 			<Dialog size="lg" className="p-6 max-h-[85vh] overflow-y-auto">
 				<Dialog.Title className="text-lg font-semibold mb-5">
@@ -141,54 +110,13 @@ export default function ComposeEmail() {
 						required
 					/>
 
-					{templates && templates.length > 0 && (
-						<div className="rounded-lg border border-kumo-line bg-kumo-recessed p-3 space-y-2">
-							<div className="flex items-center gap-2">
-								<Text size="sm" DANGEROUS_className="font-medium">
-									Template
-								</Text>
-								<select
-									value={templateId}
-									onChange={(e) => {
-										setTemplateId(e.target.value);
-										setPlaceholderValues({});
-									}}
-									className="flex-1 rounded-md border border-kumo-line bg-kumo-base px-2 py-1 text-sm"
-								>
-									<option value="">None</option>
-									{templates.map((t) => (
-										<option key={t.id} value={t.id}>
-											{t.name}
-										</option>
-									))}
-								</select>
-								<Button
-									type="button"
-									variant="secondary"
-									size="xs"
-									disabled={!selectedTemplate}
-									onClick={applyTemplate}
-								>
-									Insert
-								</Button>
-							</div>
-							{templateKeys.map((key) => {
-								const def = selectedTemplate?.placeholders?.find((p) => p.key === key);
-								return (
-									<Input
-										key={key}
-										size="sm"
-										label={def?.label || key}
-										placeholder={def?.default || `{{${key}}}`}
-										value={placeholderValues[key] ?? ""}
-										onChange={(e) =>
-											setPlaceholderValues((v) => ({ ...v, [key]: e.target.value }))
-										}
-									/>
-								);
-							})}
-						</div>
-					)}
+					<TemplatePicker
+						mailboxId={mailboxId}
+						subject={subject}
+						setSubject={setSubject}
+						body={body}
+						setBody={setBody}
+					/>
 
 					<div>
 						<Text size="sm" DANGEROUS_className="font-medium mb-1.5 block">
