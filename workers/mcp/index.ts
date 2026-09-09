@@ -19,6 +19,8 @@ import {
 	toolSendEmail,
 	toolMarkEmailRead,
 	toolMoveEmail,
+	toolListTemplates,
+	toolGetTemplate,
 } from "../lib/tools";
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
@@ -82,6 +84,22 @@ export class EmailMCP extends McpAgent<Env> {
 			return null;
 		};
 
+		// Shared args for template-aware send/draft tools.
+		const templateArgs = {
+			templateId: z
+				.string()
+				.optional()
+				.describe(
+					"ID of a saved mailbox template to render as the email body (see list_templates). When set, bodyHtml is ignored for the body.",
+				),
+			placeholders: z
+				.record(z.string())
+				.optional()
+				.describe(
+					"Values for the template's {{placeholders}} as a JSON object. Values may be plain text or small HTML fragments (<p>, <a>, <img>, ...).",
+				),
+		};
+
 		// ── list_mailboxes ─────────────────────────────────────────
 		this.server.tool(
 			"list_mailboxes",
@@ -90,6 +108,37 @@ export class EmailMCP extends McpAgent<Env> {
 			async () => {
 				const result = await toolListMailboxes(env);
 				return mcpText(result);
+			},
+		);
+
+		// ── list_templates ─────────────────────────────────────────
+		this.server.tool(
+			"list_templates",
+			"List the saved email templates for a mailbox (id, name, subject, placeholders).",
+			{
+				mailboxId: z.string().describe("The mailbox email address"),
+			},
+			async ({ mailboxId }) => {
+				const denied = await verifyMailbox(mailboxId);
+				if (denied) return denied;
+				return mcpText(await toolListTemplates(env, mailboxId));
+			},
+		);
+
+		// ── get_template ───────────────────────────────────────────
+		this.server.tool(
+			"get_template",
+			"Get one email template with its full HTML body and placeholder definitions.",
+			{
+				mailboxId: z.string().describe("The mailbox email address"),
+				templateId: z.string().describe("The template ID"),
+			},
+			async ({ mailboxId, templateId }) => {
+				const denied = await verifyMailbox(mailboxId);
+				if (denied) return denied;
+				return mcpResult(
+					(await toolGetTemplate(env, mailboxId, templateId)) as Record<string, unknown>,
+				);
 			},
 		);
 
@@ -195,9 +244,11 @@ export class EmailMCP extends McpAgent<Env> {
 				subject: z.string().describe("Subject line (usually 'Re: ...')"),
 				bodyHtml: z
 					.string()
-					.describe("The HTML body of the reply"),
+					.optional()
+					.describe("The HTML body of the reply (omit when using templateId)"),
+				...templateArgs,
 			},
-			async ({ mailboxId, originalEmailId, to, subject, bodyHtml }) => {
+			async ({ mailboxId, originalEmailId, to, subject, bodyHtml, templateId, placeholders }) => {
 				const denied = await verifyMailbox(mailboxId);
 				if (denied) return denied;
 				const result = await toolDraftReply(env, mailboxId, {
@@ -206,7 +257,9 @@ export class EmailMCP extends McpAgent<Env> {
 					subject,
 					body: bodyHtml,
 					isPlainText: false,
-					runVerifyDraft: true,
+					runVerifyDraft: !templateId,
+					templateId,
+					placeholders,
 				});
 				return mcpResult(result);
 			},
@@ -223,7 +276,10 @@ export class EmailMCP extends McpAgent<Env> {
 					.optional()
 					.describe("Recipient email address (optional for early drafts)"),
 				subject: z.string().describe("Subject line"),
-				bodyHtml: z.string().describe("The HTML body of the draft"),
+				bodyHtml: z
+					.string()
+					.optional()
+					.describe("The HTML body of the draft (omit when using templateId)"),
 				in_reply_to: z
 					.string()
 					.optional()
@@ -232,8 +288,9 @@ export class EmailMCP extends McpAgent<Env> {
 					.string()
 					.optional()
 					.describe("Thread ID to attach this draft to (optional)"),
+				...templateArgs,
 			},
-			async ({ mailboxId, to, subject, bodyHtml, in_reply_to, thread_id }) => {
+			async ({ mailboxId, to, subject, bodyHtml, in_reply_to, thread_id, templateId, placeholders }) => {
 				const denied = await verifyMailbox(mailboxId);
 				if (denied) return denied;
 				const result = await toolDraftEmail(env, mailboxId, {
@@ -241,9 +298,11 @@ export class EmailMCP extends McpAgent<Env> {
 					subject,
 					body: bodyHtml,
 					isPlainText: false,
-					runVerifyDraft: true,
+					runVerifyDraft: !templateId,
 					in_reply_to,
 					thread_id,
+					templateId,
+					placeholders,
 				});
 				if ("error" in result) {
 					return mcpResult(result);
@@ -321,9 +380,13 @@ export class EmailMCP extends McpAgent<Env> {
 					.describe("The ID of the email being replied to"),
 				to: z.string().email().describe("Recipient email address"),
 				subject: z.string().describe("Subject line"),
-				bodyHtml: z.string().describe("The HTML body of the reply"),
+				bodyHtml: z
+					.string()
+					.optional()
+					.describe("The HTML body of the reply (omit when using templateId)"),
+				...templateArgs,
 			},
-			async ({ mailboxId, originalEmailId, to, subject, bodyHtml }) => {
+			async ({ mailboxId, originalEmailId, to, subject, bodyHtml, templateId, placeholders }) => {
 				const denied = await verifyMailbox(mailboxId);
 				if (denied) return denied;
 				const result = await toolSendReply(env, mailboxId, {
@@ -331,6 +394,8 @@ export class EmailMCP extends McpAgent<Env> {
 					to,
 					subject,
 					bodyHtml,
+					templateId,
+					placeholders,
 				});
 				if ("error" in result) {
 					// Preserve the original MCP error format for send failures
@@ -360,15 +425,21 @@ export class EmailMCP extends McpAgent<Env> {
 				mailboxId: z.string().describe("The mailbox email address to send from"),
 				to: z.string().email().describe("Recipient email address"),
 				subject: z.string().describe("Subject line"),
-				bodyHtml: z.string().describe("The HTML body of the email"),
+				bodyHtml: z
+					.string()
+					.optional()
+					.describe("The HTML body of the email (omit when using templateId)"),
+				...templateArgs,
 			},
-			async ({ mailboxId, to, subject, bodyHtml }) => {
+			async ({ mailboxId, to, subject, bodyHtml, templateId, placeholders }) => {
 				const denied = await verifyMailbox(mailboxId);
 				if (denied) return denied;
 				const result = await toolSendEmail(env, mailboxId, {
 					to,
 					subject,
 					bodyHtml,
+					templateId,
+					placeholders,
 				});
 				if ("error" in result) {
 					if (typeof result.error === "string" && result.error.startsWith("Failed to send")) {

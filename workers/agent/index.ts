@@ -28,6 +28,8 @@ import {
 	toolMarkEmailRead,
 	toolMoveEmail,
 	toolDiscardDraft,
+	toolListTemplates,
+	toolGetTemplate,
 } from "../lib/tools";
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
@@ -176,9 +178,29 @@ function createEmailTools(env: Env, mailboxId: string) {
 			},
 		}),
 
+		list_templates: defineTool({
+			description:
+				"List the saved email templates for this mailbox (id, name, subject, placeholders). Use before drafting from a template.",
+			parameters: z.object({}),
+			execute: async (): Promise<unknown> => {
+				return toolListTemplates(env, mailboxId);
+			},
+		}),
+
+		get_template: defineTool({
+			description:
+				"Get one email template with its full HTML body and placeholder definitions.",
+			parameters: z.object({
+				templateId: z.string().describe("The template ID"),
+			}),
+			execute: async ({ templateId }): Promise<unknown> => {
+				return toolGetTemplate(env, mailboxId, templateId);
+			},
+		}),
+
 		draft_email: defineTool({
 			description:
-				"Draft a new email (not a reply) and save it to the Drafts folder. This does NOT send — it saves a draft for the operator to review. Use this for composing new outbound emails. Write the body as plain text — no HTML tags.",
+				"Draft a new email (not a reply) and save it to the Drafts folder. This does NOT send — it saves a draft for the operator to review. Use this for composing new outbound emails. Write the body as plain text — no HTML tags. To use a saved template instead, pass templateId (+ placeholders) and omit body.",
 			parameters: z.object({
 				to: z.string().email().describe("Recipient email address"),
 				subject: z
@@ -186,23 +208,34 @@ function createEmailTools(env: Env, mailboxId: string) {
 					.describe("Subject line"),
 				body: z
 					.string()
+					.optional()
 					.describe(
-						"The plain text body of the email. No HTML — just write normally.",
+						"The plain text body of the email. No HTML — just write normally. Omit when using templateId.",
 					),
+				templateId: z
+					.string()
+					.optional()
+					.describe("ID of a saved template to render as the body (see list_templates)."),
+				placeholders: z
+					.record(z.string())
+					.optional()
+					.describe("Values for the template's {{placeholders}} as a JSON object."),
 			}),
-			execute: async ({ to, subject, body }): Promise<unknown> => {
+			execute: async ({ to, subject, body, templateId, placeholders }): Promise<unknown> => {
 				return toolDraftEmail(env, mailboxId, {
 					to,
 					subject,
 					body,
 					isPlainText: true,
+					templateId,
+					placeholders,
 				});
 			},
 		}),
 
 		draft_reply: defineTool({
 			description:
-				"Draft a reply to an existing email and save it to the Drafts folder. This does NOT send — it saves a draft for the operator to review and send from the UI. Write the body as plain text — no HTML tags.",
+				"Draft a reply to an existing email and save it to the Drafts folder. This does NOT send — it saves a draft for the operator to review and send from the UI. Write the body as plain text — no HTML tags. To use a saved template instead, pass templateId (+ placeholders) and omit body.",
 			parameters: z.object({
 				originalEmailId: z
 					.string()
@@ -213,18 +246,29 @@ function createEmailTools(env: Env, mailboxId: string) {
 					.describe("Subject line (usually 'Re: ...')"),
 				body: z
 					.string()
+					.optional()
 					.describe(
-						"The plain text body of the reply. No HTML — just write normally.",
+						"The plain text body of the reply. No HTML — just write normally. Omit when using templateId.",
 					),
+				templateId: z
+					.string()
+					.optional()
+					.describe("ID of a saved template to render as the reply body (see list_templates)."),
+				placeholders: z
+					.record(z.string())
+					.optional()
+					.describe("Values for the template's {{placeholders}} as a JSON object."),
 			}),
-			execute: async ({ originalEmailId, to, subject, body }): Promise<unknown> => {
+			execute: async ({ originalEmailId, to, subject, body, templateId, placeholders }): Promise<unknown> => {
 				return toolDraftReply(env, mailboxId, {
 					originalEmailId,
 					to,
 					subject,
 					body,
 					isPlainText: true,
-					runVerifyDraft: true,
+					runVerifyDraft: !templateId,
+					templateId,
+					placeholders,
 				});
 			},
 		}),

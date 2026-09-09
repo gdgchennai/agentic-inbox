@@ -2,7 +2,13 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { Email, Folder, Mailbox } from "~/types";
+import type {
+	Email,
+	EmailTemplate,
+	Folder,
+	Mailbox,
+	TemplateAssetUpload,
+} from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -160,6 +166,41 @@ const api = {
 	// Search
 	searchEmails: (mailboxId: string, params: Record<string, string>) =>
 		get<EmailListResponse | Email[]>(`/api/v1/mailboxes/${mailboxId}/search`, { params }),
+
+	// Templates
+	listTemplates: (mailboxId: string) =>
+		get<EmailTemplate[]>(`/api/v1/mailboxes/${mailboxId}/templates`),
+	getTemplate: (mailboxId: string, id: string) =>
+		get<EmailTemplate>(`/api/v1/mailboxes/${mailboxId}/templates/${id}`),
+	createTemplate: (mailboxId: string, data: Partial<EmailTemplate> & { name: string }) =>
+		post<EmailTemplate>(`/api/v1/mailboxes/${mailboxId}/templates`, data),
+	updateTemplate: (mailboxId: string, id: string, data: Partial<EmailTemplate>) =>
+		put<EmailTemplate>(`/api/v1/mailboxes/${mailboxId}/templates/${id}`, data),
+	deleteTemplate: (mailboxId: string, id: string) =>
+		del<void>(`/api/v1/mailboxes/${mailboxId}/templates/${id}`),
+	uploadTemplateAsset: async (
+		mailboxId: string,
+		file: File,
+	): Promise<TemplateAssetUpload> => {
+		const content = await fileToBase64(file);
+		return post<TemplateAssetUpload>(
+			`/api/v1/mailboxes/${mailboxId}/templates/assets`,
+			{ content, filename: file.name, type: file.type || "application/octet-stream" },
+		);
+	},
 };
+
+/** Read a File as a base64 string (no data: prefix). */
+function fileToBase64(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => {
+			const result = reader.result as string;
+			resolve(result.slice(result.indexOf(",") + 1));
+		};
+		reader.onerror = () => reject(reader.error);
+		reader.readAsDataURL(file);
+	});
+}
 
 export default api;

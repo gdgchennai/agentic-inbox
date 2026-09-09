@@ -6,6 +6,7 @@ import { Button, Tooltip } from "@cloudflare/kumo";
 import {
 	ArrowClockwiseIcon,
 	ArrowCounterClockwiseIcon,
+	ImageIcon,
 	LinkBreakIcon,
 	LinkSimpleIcon,
 	ListBulletsIcon,
@@ -26,24 +27,49 @@ import { TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
+
+/**
+ * Image extension that also round-trips `data-asset-id` — the Worker uses
+ * that attribute to swap the <img> for an inline CID attachment at send time.
+ */
+const AssetImage = TiptapImage.extend({
+	addAttributes() {
+		return {
+			...this.parent?.(),
+			"data-asset-id": {
+				default: null,
+				parseHTML: (el) => el.getAttribute("data-asset-id"),
+				renderHTML: (attrs) =>
+					attrs["data-asset-id"]
+						? { "data-asset-id": attrs["data-asset-id"] }
+						: {},
+			},
+		};
+	},
+});
 
 interface RichTextEditorProps {
 	value: string;
 	onChange: (value: string) => void;
+	/** When provided, shows an "Insert image" button that uploads and embeds the file. */
+	onImageUpload?: (file: File) => Promise<{ url: string; assetId: string }>;
 }
 
 export default function RichTextEditor({
 	value,
 	onChange,
+	onImageUpload,
 }: RichTextEditorProps) {
+	const fileInputRef = useRef<HTMLInputElement>(null);
+
 	const editor = useEditor({
 		extensions: [
 			StarterKit,
 			Underline,
 			TextAlign.configure({ types: ["heading", "paragraph"] }),
 			LinkExtension.configure({ openOnClick: false }),
-			TiptapImage,
+			AssetImage,
 			TextStyle,
 			Color,
 			Highlight.configure({ multicolor: true }),
@@ -72,6 +98,23 @@ export default function RichTextEditor({
 			return () => cancelAnimationFrame(rafId);
 		}
 	}, [value, editor]);
+
+	const handleImageFile = useCallback(
+		async (file: File | undefined) => {
+			if (!file || !editor || !onImageUpload) return;
+			try {
+				const { url, assetId } = await onImageUpload(file);
+				editor
+					.chain()
+					.focus()
+					.setImage({ src: url, "data-asset-id": assetId } as never)
+					.run();
+			} catch (err) {
+				console.error("Image upload failed", err);
+			}
+		},
+		[editor, onImageUpload],
+	);
 
 	const setLink = useCallback(() => {
 		if (!editor) return;
@@ -202,6 +245,18 @@ export default function RichTextEditor({
 						aria-label="Horizontal rule"
 					/>
 				</Tooltip>
+				{onImageUpload && (
+					<Tooltip content="Insert image" side="bottom" asChild>
+						<Button
+							variant="ghost"
+							shape="square"
+							size="sm"
+							icon={<ImageIcon size={16} />}
+							onClick={() => fileInputRef.current?.click()}
+							aria-label="Insert image"
+						/>
+					</Tooltip>
+				)}
 
 				<div className="mx-1 h-5 w-px bg-kumo-fill" />
 
@@ -234,6 +289,19 @@ export default function RichTextEditor({
 			<div className="flex-1 overflow-y-auto">
 				<EditorContent editor={editor} />
 			</div>
+
+			{onImageUpload && (
+				<input
+					ref={fileInputRef}
+					type="file"
+					accept="image/*"
+					className="hidden"
+					onChange={(e) => {
+						void handleImageFile(e.target.files?.[0]);
+						e.target.value = "";
+					}}
+				/>
+			)}
 		</div>
 	);
 }

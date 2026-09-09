@@ -64,3 +64,11 @@ export interface Folder {
 	name: string;
 	unreadCount: number;
 }
+
+export type { TemplatePlaceholder, EmailTemplate } from "shared/templates";
+
+export interface TemplateAssetUpload {
+	id: string;
+	contentId: string;
+	url: string;
+}

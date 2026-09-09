@@ -27,6 +27,11 @@ import {
 	buildThreadingHeaders,
 } from "./email-helpers";
 import { verifyDraft } from "./ai";
+import {
+	resolveTemplateForSend,
+	renderTemplateForDraft,
+	type InlineAttachment,
+} from "./templates";
 import { sendEmail } from "../email-sender";
 import { Folders } from "../../shared/folders";
 import type { Env } from "../types";
@@ -42,6 +47,69 @@ type MailboxSearchStub = {
 type RateLimitStub = {
 	checkSendRateLimit: () => Promise<string | null>;
 };
+
+type TemplateListStub = {
+	listTemplates: () => Promise<unknown[]>;
+	getTemplate: (id: string) => Promise<unknown | null>;
+};
+
+// ── list_templates / get_template ─────────────────────────────────
+
+export async function toolListTemplates(env: Env, mailboxId: string) {
+	const stub = getMailboxStub(env, mailboxId) as unknown as TemplateListStub;
+	return stub.listTemplates();
+}
+
+export async function toolGetTemplate(
+	env: Env,
+	mailboxId: string,
+	templateId: string,
+) {
+	const stub = getMailboxStub(env, mailboxId) as unknown as TemplateListStub;
+	const tpl = await stub.getTemplate(templateId);
+	return tpl ?? { error: "Template not found" };
+}
+
+interface TemplateParams {
+	templateId?: string;
+	placeholders?: Record<string, string>;
+}
+
+/**
+ * Resolve the outgoing body for a tool call. When `templateId` is set the
+ * template is rendered (with images inlined) and AI draft verification is
+ * skipped — verifyDraft flattens HTML to text and would destroy the layout.
+ * Otherwise the plain body is run through verifyDraft as before.
+ */
+async function resolveToolBody(
+	env: Env,
+	mailboxId: string,
+	rawBody: string,
+	tpl: TemplateParams,
+): Promise<
+	| { html: string; templateSubject?: string; attachments: InlineAttachment[] }
+	| { error: string }
+> {
+	if (tpl.templateId) {
+		const resolved = await resolveTemplateForSend(
+			env,
+			mailboxId,
+			tpl.templateId,
+			tpl.placeholders ?? {},
+		);
+		if ("error" in resolved) return resolved;
+		return {
+			html: resolved.html,
+			templateSubject: resolved.subject,
+			attachments: resolved.attachments,
+		};
+	}
+	const sanitized = await verifyDraft(env.AI, rawBody);
+	if (!sanitized) {
+		return { error: "Draft verification failed — please try again." };
+	}
+	return { html: sanitized, attachments: [] };
+}
 
 // ── list_mailboxes ─────────────────────────────────────────────────
 
@@ -123,9 +191,11 @@ export async function toolDraftReply(
 		originalEmailId: string;
 		to: string;
 		subject: string;
-		body: string;
+		body?: string;
 		isPlainText?: boolean;
 		runVerifyDraft?: boolean;
+		templateId?: string;
+		placeholders?: Record<string, string>;
 	},
 ): Promise<
 	| { status: "draft_saved"; draftId: string; message: string; draft: Record<string, string> }
@@ -133,19 +203,33 @@ export async function toolDraftReply(
 > {
 	const stub = getMailboxStub(env, mailboxId);
 
-	// Verify/sanitize if requested
-	let processedBody = params.body.trim();
-	if (params.runVerifyDraft) {
-		const sanitized = await verifyDraft(env.AI, processedBody);
-		if (!sanitized) {
-			return { error: "Draft verification failed — body could not be verified. Please try again." };
-		}
-		processedBody = sanitized;
-	}
+	let processedBody = (params.body ?? "").trim();
+	let subject = params.subject;
 
-	// Convert plain text to HTML if needed
-	if (params.isPlainText) {
-		processedBody = textToHtml(processedBody);
+	if (params.templateId) {
+		// Template body is trusted, pre-authored HTML — skip verify + text conversion.
+		const rendered = await renderTemplateForDraft(
+			env,
+			mailboxId,
+			params.templateId,
+			params.placeholders ?? {},
+		);
+		if ("error" in rendered) return { error: rendered.error };
+		processedBody = rendered.html;
+		if (!subject?.trim()) subject = rendered.subject;
+	} else {
+		// Verify/sanitize if requested
+		if (params.runVerifyDraft) {
+			const sanitized = await verifyDraft(env.AI, processedBody);
+			if (!sanitized) {
+				return { error: "Draft verification failed — body could not be verified. Please try again." };
+			}
+			processedBody = sanitized;
+		}
+		// Convert plain text to HTML if needed
+		if (params.isPlainText) {
+			processedBody = textToHtml(processedBody);
+		}
 	}
 
 	const draftId = crypto.randomUUID();
@@ -168,7 +252,7 @@ export async function toolDraftReply(
 		Folders.DRAFT,
 		{
 			id: draftId,
-			subject: params.subject,
+			subject,
 			sender: mailboxId.toLowerCase(),
 			recipient: params.to.toLowerCase(),
 			date: new Date().toISOString(),
@@ -187,8 +271,8 @@ export async function toolDraftReply(
 		draft: {
 			originalEmailId: params.originalEmailId,
 			to: params.to,
-			subject: params.subject,
-			body: params.isPlainText ? params.body.trim() : bodyHtml,
+			subject,
+			body: params.isPlainText && !params.templateId ? (params.body ?? "").trim() : bodyHtml,
 		},
 	};
 }
@@ -201,13 +285,15 @@ export async function toolDraftEmail(
 	params: {
 		to: string;
 		subject: string;
-		body: string;
+		body?: string;
 		isPlainText?: boolean;
 		runVerifyDraft?: boolean;
 		/** Optional in_reply_to for create_draft style */
 		in_reply_to?: string;
 		/** Optional thread_id for create_draft style */
 		thread_id?: string;
+		templateId?: string;
+		placeholders?: Record<string, string>;
 	},
 ): Promise<
 	| { status: string; draftId: string; threadId?: string; message: string; draft?: Record<string, string> }
@@ -215,17 +301,30 @@ export async function toolDraftEmail(
 > {
 	const stub = getMailboxStub(env, mailboxId);
 
-	let processedBody = params.body.trim();
-	if (params.runVerifyDraft) {
-		const sanitized = await verifyDraft(env.AI, processedBody);
-		if (!sanitized) {
-			return { error: "Draft verification failed — body could not be verified. Please try again." };
-		}
-		processedBody = sanitized;
-	}
+	let processedBody = (params.body ?? "").trim();
+	let subject = params.subject;
 
-	if (params.isPlainText) {
-		processedBody = textToHtml(processedBody);
+	if (params.templateId) {
+		const rendered = await renderTemplateForDraft(
+			env,
+			mailboxId,
+			params.templateId,
+			params.placeholders ?? {},
+		);
+		if ("error" in rendered) return { error: rendered.error };
+		processedBody = rendered.html;
+		if (!subject?.trim()) subject = rendered.subject;
+	} else {
+		if (params.runVerifyDraft) {
+			const sanitized = await verifyDraft(env.AI, processedBody);
+			if (!sanitized) {
+				return { error: "Draft verification failed — body could not be verified. Please try again." };
+			}
+			processedBody = sanitized;
+		}
+		if (params.isPlainText) {
+			processedBody = textToHtml(processedBody);
+		}
 	}
 
 	const draftId = crypto.randomUUID();
@@ -244,7 +343,7 @@ export async function toolDraftEmail(
 		Folders.DRAFT,
 		{
 			id: draftId,
-			subject: params.subject,
+			subject,
 			sender: mailboxId.toLowerCase(),
 			recipient: (params.to || "").toLowerCase(),
 			date: new Date().toISOString(),
@@ -263,8 +362,8 @@ export async function toolDraftEmail(
 		message: "Draft saved to Drafts folder. Review it and confirm to send.",
 		draft: {
 			to: params.to,
-			subject: params.subject,
-			body: params.isPlainText ? params.body.trim() : processedBody,
+			subject,
+			body: params.isPlainText && !params.templateId ? (params.body ?? "").trim() : processedBody,
 		},
 	};
 }
@@ -396,8 +495,10 @@ export async function toolSendReply(
 	params: {
 		originalEmailId: string;
 		to: string;
-		subject: string;
-		bodyHtml: string;
+		subject?: string;
+		bodyHtml?: string;
+		templateId?: string;
+		placeholders?: Record<string, string>;
 	},
 ): Promise<
 	| { status: "sent"; messageId: string; message: string }
@@ -421,25 +522,30 @@ export async function toolSendReply(
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
-	// Verify and append quoted original message
-	const sanitizedBody = await verifyDraft(env.AI, params.bodyHtml);
-	if (!sanitizedBody) {
-		return { error: "Draft verification failed — refusing to send unverified content. Please try again." };
-	}
+	// Resolve the body (template render, or AI-verified plain body) and append
+	// the quoted original message.
+	const resolvedBody = await resolveToolBody(env, mailboxId, params.bodyHtml ?? "", params);
+	if ("error" in resolvedBody) return { error: resolvedBody.error };
+	const subject = params.subject?.trim()
+		? params.subject
+		: (resolvedBody.templateSubject ?? params.subject ?? "");
 	const quotedBlock = buildQuotedReplyBlock({
 		date: originalEmail.date,
 		sender: originalEmail.sender || params.to,
 		body: originalEmail.body ?? undefined,
 	});
-	const fullBodyHtml = sanitizedBody + quotedBlock;
+	const fullBodyHtml = resolvedBody.html + quotedBlock;
 
 	try {
 		await sendEmail(env.EMAIL, {
 			to: params.to,
 			from: mailboxId,
-			subject: params.subject,
+			subject,
 			html: fullBodyHtml,
 			headers: buildThreadingHeaders(originalMsgId, references),
+			...(resolvedBody.attachments.length
+				? { attachments: resolvedBody.attachments }
+				: {}),
 		});
 	} catch (e) {
 		console.error("Email send failed:", (e as Error).message);
@@ -450,7 +556,7 @@ export async function toolSendReply(
 		Folders.SENT,
 		{
 			id: messageId,
-			subject: params.subject,
+			subject,
 			sender: mailboxId.toLowerCase(),
 			recipient: params.to.toLowerCase(),
 			date: new Date().toISOString(),
@@ -474,8 +580,10 @@ export async function toolSendEmail(
 	mailboxId: string,
 	params: {
 		to: string;
-		subject: string;
-		bodyHtml: string;
+		subject?: string;
+		bodyHtml?: string;
+		templateId?: string;
+		placeholders?: Record<string, string>;
 	},
 ): Promise<
 	| { status: "sent"; messageId: string; message: string }
@@ -493,17 +601,21 @@ export async function toolSendEmail(
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
-	const sanitizedBody = await verifyDraft(env.AI, params.bodyHtml);
-	if (!sanitizedBody) {
-		return { error: "Draft verification failed — refusing to send unverified content. Please try again." };
-	}
+	const resolvedBody = await resolveToolBody(env, mailboxId, params.bodyHtml ?? "", params);
+	if ("error" in resolvedBody) return { error: resolvedBody.error };
+	const subject = params.subject?.trim()
+		? params.subject
+		: (resolvedBody.templateSubject ?? params.subject ?? "");
 
 	try {
 		await sendEmail(env.EMAIL, {
 			to: params.to,
 			from: mailboxId,
-			subject: params.subject,
-			html: sanitizedBody,
+			subject,
+			html: resolvedBody.html,
+			...(resolvedBody.attachments.length
+				? { attachments: resolvedBody.attachments }
+				: {}),
 		});
 	} catch (e) {
 		console.error("Email send failed:", (e as Error).message);
@@ -514,11 +626,11 @@ export async function toolSendEmail(
 		Folders.SENT,
 		{
 			id: messageId,
-			subject: params.subject,
+			subject,
 			sender: mailboxId.toLowerCase(),
 			recipient: params.to.toLowerCase(),
 			date: new Date().toISOString(),
-			body: sanitizedBody,
+			body: resolvedBody.html,
 			in_reply_to: null,
 			email_references: null,
 			thread_id: messageId,

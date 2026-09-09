@@ -7,6 +7,7 @@ import {
 	ArchiveIcon,
 	CaretLeftIcon,
 	FileIcon,
+	FileTextIcon,
 	FolderIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
@@ -169,6 +170,13 @@ export default function Sidebar() {
 						onClick={handleNavClick}
 					/>
 				))}
+
+				<FolderLink
+					to={`/mailbox/${mailboxId}/templates`}
+					icon={<FileTextIcon size={18} weight="regular" />}
+					label="Templates"
+					onClick={handleNavClick}
+				/>
 
 				{/* Custom folders */}
 				{customFolders.length > 0 && (

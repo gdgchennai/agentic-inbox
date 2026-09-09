@@ -15,6 +15,7 @@ import {
 	resolveOriginalEmail,
 } from "../lib/email-helpers";
 import { SendEmailRequestSchema } from "../lib/schemas";
+import { buildSendBody } from "../lib/templates";
 import { Folders } from "../../shared/folders";
 import type { MailboxContext } from "../lib/mailbox";
 
@@ -25,7 +26,11 @@ export async function handleReplyEmail(c: AppContext) {
 	const mailboxId = c.req.param("mailboxId") ?? "";
 	const id = c.req.param("id") ?? "";
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments } = body;
+	const { to, cc, bcc, from } = body;
+
+	const built = await buildSendBody(c.env, mailboxId, body);
+	if ("error" in built) return c.json({ error: built.error }, 404);
+	const { subject, html, text, attachments } = built;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -116,7 +121,11 @@ export async function handleForwardEmail(c: AppContext) {
 	const mailboxId = c.req.param("mailboxId") ?? "";
 	const id = c.req.param("id") ?? "";
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments } = body;
+	const { to, cc, bcc, from } = body;
+
+	const built = await buildSendBody(c.env, mailboxId, body);
+	if ("error" in built) return c.json({ error: built.error }, 404);
+	const { subject, html, text, attachments } = built;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;

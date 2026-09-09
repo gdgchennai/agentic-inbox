@@ -15,7 +15,13 @@ import {
 	buildThreadingHeaders,
 	listMailboxes,
 } from "./lib/email-helpers";
-import { SendEmailRequestSchema } from "./lib/schemas";
+import {
+	SendEmailRequestSchema,
+	TemplateBodySchema,
+	TemplateUpdateSchema,
+	TemplateAssetBodySchema,
+} from "./lib/schemas";
+import { buildSendBody } from "./lib/templates";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
@@ -168,7 +174,11 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
+	const { to, cc, bcc, from, in_reply_to, references, thread_id } = body;
+
+	const built = await buildSendBody(c.env, mailboxId, body);
+	if ("error" in built) return c.json({ error: built.error }, 404);
+	const { subject, html, text, attachments } = built;
 
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
@@ -270,6 +280,125 @@ app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", async (c: AppCon
 
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", handleReplyEmail);
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
+
+// -- Templates -----------------------------------------------------
+
+type TemplateStub = {
+	listTemplates: () => Promise<unknown[]>;
+	getTemplate: (id: string) => Promise<unknown | null>;
+	createTemplate: (data: unknown) => Promise<unknown>;
+	updateTemplate: (id: string, data: unknown) => Promise<unknown | null>;
+	deleteTemplate: (id: string) => Promise<{ id: string; filename: string }[] | null>;
+	createTemplateAsset: (asset: unknown) => Promise<unknown>;
+	getTemplateAsset: (
+		id: string,
+	) => Promise<{ id: string; filename: string; mimetype: string } | null>;
+	deleteTemplateAsset: (
+		id: string,
+	) => Promise<{ id: string; filename: string } | null>;
+};
+
+const templateStub = (c: AppContext) => c.var.mailboxStub as unknown as TemplateStub;
+
+function sanitizeAssetFilename(name: string) {
+	return (name || "image").replace(/[\/\\:*?"<>|\x00-\x1f]/g, "_");
+}
+
+app.get("/api/v1/mailboxes/:mailboxId/templates", async (c: AppContext) => {
+	return c.json(await templateStub(c).listTemplates());
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/templates", async (c: AppContext) => {
+	const data = TemplateBodySchema.parse(await c.req.json());
+	return c.json(await templateStub(c).createTemplate(data), 201);
+});
+
+app.get("/api/v1/mailboxes/:mailboxId/templates/:id", async (c: AppContext) => {
+	const tpl = await templateStub(c).getTemplate(c.req.param("id")!);
+	return tpl ? c.json(tpl) : c.json({ error: "Template not found" }, 404);
+});
+
+app.put("/api/v1/mailboxes/:mailboxId/templates/:id", async (c: AppContext) => {
+	const data = TemplateUpdateSchema.parse(await c.req.json());
+	const tpl = await templateStub(c).updateTemplate(c.req.param("id")!, data);
+	return tpl ? c.json(tpl) : c.json({ error: "Template not found" }, 404);
+});
+
+app.delete("/api/v1/mailboxes/:mailboxId/templates/:id", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!;
+	const assets = await templateStub(c).deleteTemplate(c.req.param("id")!);
+	if (assets === null) return c.json({ error: "Template not found" }, 404);
+	await Promise.all(
+		assets.map((a) =>
+			c.env.BUCKET.delete(`template-assets/${mailboxId}/${a.id}/${a.filename}`),
+		),
+	);
+	return c.body(null, 204);
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/templates/assets", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!;
+	const { content, filename, type } = TemplateAssetBodySchema.parse(await c.req.json());
+	const assetId = crypto.randomUUID();
+	const safeFilename = sanitizeAssetFilename(filename);
+	const bytes = Uint8Array.from(atob(content), (ch) => ch.charCodeAt(0));
+	await c.env.BUCKET.put(
+		`template-assets/${mailboxId}/${assetId}/${safeFilename}`,
+		bytes,
+		{ httpMetadata: { contentType: type } },
+	);
+	const contentId = `tpl-${assetId}`;
+	await templateStub(c).createTemplateAsset({
+		id: assetId,
+		template_id: null,
+		filename: safeFilename,
+		mimetype: type,
+		size: bytes.byteLength,
+		content_id: contentId,
+	});
+	return c.json(
+		{
+			id: assetId,
+			contentId,
+			url: `/api/v1/mailboxes/${mailboxId}/templates/assets/${assetId}`,
+		},
+		201,
+	);
+});
+
+app.get(
+	"/api/v1/mailboxes/:mailboxId/templates/assets/:assetId",
+	async (c: AppContext) => {
+		const mailboxId = c.req.param("mailboxId")!;
+		const assetId = c.req.param("assetId")!;
+		const asset = await templateStub(c).getTemplateAsset(assetId);
+		if (!asset) return c.json({ error: "Asset not found" }, 404);
+		const obj = await c.env.BUCKET.get(
+			`template-assets/${mailboxId}/${assetId}/${asset.filename}`,
+		);
+		if (!obj) return c.json({ error: "Asset file not found" }, 404);
+		return new Response(obj.body, {
+			headers: {
+				"Content-Type": asset.mimetype,
+				"Cache-Control": "private, max-age=3600",
+			},
+		});
+	},
+);
+
+app.delete(
+	"/api/v1/mailboxes/:mailboxId/templates/assets/:assetId",
+	async (c: AppContext) => {
+		const mailboxId = c.req.param("mailboxId")!;
+		const assetId = c.req.param("assetId")!;
+		const asset = await templateStub(c).deleteTemplateAsset(assetId);
+		if (!asset) return c.json({ error: "Asset not found" }, 404);
+		await c.env.BUCKET.delete(
+			`template-assets/${mailboxId}/${assetId}/${asset.filename}`,
+		);
+		return c.body(null, 204);
+	},
+);
 
 // -- Folders --------------------------------------------------------
 

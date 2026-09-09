@@ -869,4 +869,176 @@ export class MailboxDO extends DurableObject<Env> {
 			this.db.insert(schema.attachments).values(attachments).run();
 		}
 	}
+
+	// ── Templates (Drizzle) ────────────────────────────────────────
+
+	#parseTemplate(row: typeof schema.templates.$inferSelect) {
+		let placeholders: unknown = [];
+		try {
+			placeholders = JSON.parse(row.placeholders);
+		} catch {
+			placeholders = [];
+		}
+		return {
+			...row,
+			placeholders: Array.isArray(placeholders) ? placeholders : [],
+		};
+	}
+
+	async listTemplates() {
+		const rows = this.db
+			.select()
+			.from(schema.templates)
+			.orderBy(schema.templates.name)
+			.all();
+		return rows.map((r) => this.#parseTemplate(r));
+	}
+
+	async getTemplate(id: string) {
+		const row = this.db
+			.select()
+			.from(schema.templates)
+			.where(eq(schema.templates.id, id))
+			.get();
+		return row ? this.#parseTemplate(row) : null;
+	}
+
+	async createTemplate(data: {
+		name: string;
+		subject?: string;
+		body?: string;
+		placeholders?: unknown[];
+		assetIds?: string[];
+	}) {
+		const id = crypto.randomUUID();
+		const now = new Date().toISOString();
+		this.db
+			.insert(schema.templates)
+			.values({
+				id,
+				name: data.name,
+				subject: data.subject ?? "",
+				body: data.body ?? "",
+				placeholders: JSON.stringify(data.placeholders ?? []),
+				created_at: now,
+				updated_at: now,
+			})
+			.run();
+		if (data.assetIds?.length) await this.linkTemplateAssets(id, data.assetIds);
+		return this.getTemplate(id);
+	}
+
+	async updateTemplate(
+		id: string,
+		data: {
+			name?: string;
+			subject?: string;
+			body?: string;
+			placeholders?: unknown[];
+			assetIds?: string[];
+		},
+	) {
+		const existing = this.db
+			.select({ id: schema.templates.id })
+			.from(schema.templates)
+			.where(eq(schema.templates.id, id))
+			.get();
+		if (!existing) return null;
+
+		const patch: Partial<typeof schema.templates.$inferInsert> = {
+			updated_at: new Date().toISOString(),
+		};
+		if (data.name !== undefined) patch.name = data.name;
+		if (data.subject !== undefined) patch.subject = data.subject;
+		if (data.body !== undefined) patch.body = data.body;
+		if (data.placeholders !== undefined)
+			patch.placeholders = JSON.stringify(data.placeholders ?? []);
+
+		this.db.update(schema.templates).set(patch).where(eq(schema.templates.id, id)).run();
+		if (data.assetIds?.length) await this.linkTemplateAssets(id, data.assetIds);
+		return this.getTemplate(id);
+	}
+
+	/**
+	 * Delete a template and its assets. Returns the deleted asset rows so the
+	 * caller can remove the R2 blobs.
+	 */
+	async deleteTemplate(id: string) {
+		const existing = this.db
+			.select({ id: schema.templates.id })
+			.from(schema.templates)
+			.where(eq(schema.templates.id, id))
+			.get();
+		if (!existing) return null;
+
+		const assets = this.db
+			.select()
+			.from(schema.templateAssets)
+			.where(eq(schema.templateAssets.template_id, id))
+			.all();
+
+		this.db.delete(schema.templateAssets).where(eq(schema.templateAssets.template_id, id)).run();
+		this.db.delete(schema.templates).where(eq(schema.templates.id, id)).run();
+		return assets;
+	}
+
+	// ── Template assets ────────────────────────────────────────────
+
+	async createTemplateAsset(asset: {
+		id: string;
+		template_id?: string | null;
+		filename: string;
+		mimetype: string;
+		size: number;
+		content_id: string;
+	}) {
+		this.db
+			.insert(schema.templateAssets)
+			.values({
+				id: asset.id,
+				template_id: asset.template_id ?? null,
+				filename: asset.filename,
+				mimetype: asset.mimetype,
+				size: asset.size,
+				content_id: asset.content_id,
+				created_at: new Date().toISOString(),
+			})
+			.run();
+		return this.getTemplateAsset(asset.id);
+	}
+
+	async getTemplateAsset(id: string) {
+		return (
+			this.db
+				.select()
+				.from(schema.templateAssets)
+				.where(eq(schema.templateAssets.id, id))
+				.get() ?? null
+		);
+	}
+
+	async listTemplateAssets(templateId: string) {
+		return this.db
+			.select()
+			.from(schema.templateAssets)
+			.where(eq(schema.templateAssets.template_id, templateId))
+			.all();
+	}
+
+	async linkTemplateAssets(templateId: string, assetIds: string[]) {
+		for (const assetId of assetIds) {
+			this.db
+				.update(schema.templateAssets)
+				.set({ template_id: templateId })
+				.where(eq(schema.templateAssets.id, assetId))
+				.run();
+		}
+	}
+
+	async deleteTemplateAsset(id: string) {
+		const row = await this.getTemplateAsset(id);
+		if (!row) return null;
+		this.db.delete(schema.templateAssets).where(eq(schema.templateAssets.id, id)).run();
+		return row;
+	}
 }

@@ -168,4 +168,30 @@ export const mailboxMigrations: Migration[] = [
             CREATE INDEX IF NOT EXISTS idx_emails_folder_date ON emails(folder_id, date DESC);
         `,
 	},
+	{
+		name: "9_add_templates",
+		sql: txn(`
+            CREATE TABLE templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                subject TEXT NOT NULL DEFAULT '',
+                body TEXT NOT NULL DEFAULT '',
+                placeholders TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE template_assets (
+                id TEXT PRIMARY KEY,
+                template_id TEXT,
+                filename TEXT NOT NULL,
+                mimetype TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                content_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX idx_template_assets_template_id ON template_assets(template_id);
+        `),
+	},
 ];

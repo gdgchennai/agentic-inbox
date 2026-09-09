@@ -42,3 +42,24 @@ export const attachments = sqliteTable("attachments", {
 	content_id: text("content_id"),
 	disposition: text("disposition"),
 });
+
+export const templates = sqliteTable("templates", {
+	id: text("id").primaryKey(),
+	name: text("name").notNull(),
+	subject: text("subject").notNull().default(""),
+	body: text("body").notNull().default(""),
+	// JSON-encoded TemplatePlaceholder[] (see shared/templates.ts)
+	placeholders: text("placeholders").notNull().default("[]"),
+	created_at: text("created_at").notNull(),
+	updated_at: text("updated_at").notNull(),
+});
+
+export const templateAssets = sqliteTable("template_assets", {
+	id: text("id").primaryKey(),
+	template_id: text("template_id"),
+	filename: text("filename").notNull(),
+	mimetype: text("mimetype").notNull(),
+	size: integer("size").notNull(),
+	content_id: text("content_id").notNull(),
+	created_at: text("created_at").notNull(),
+});

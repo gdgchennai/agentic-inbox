@@ -38,6 +38,7 @@ https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
 ## Features
 
 - **Full email client** — Send and receive emails via Cloudflare Email Routing with a rich text composer, reply/forward threading, folder organization, search, and attachments
+- **HTML templates** — Per-mailbox reusable templates with `{{placeholder}}` tokens (text or HTML fragments) and inline images. Body editor has three modes: rich-text, a drag-and-drop **Design** builder (GrapesJS newsletter preset, lazy-loaded), and raw **HTML** (paste full table-based templates). Available in the composer, the send/reply/forward APIs (`template_id` + `placeholders`), and MCP (`list_templates` / `get_template`, plus `templateId` on the send/draft tools). Images are delivered as inline CID attachments so they render in every mail client.
 - **Per-mailbox isolation** — Each mailbox runs in its own Durable Object with SQLite storage and R2 for attachments
 - **Built-in AI agent** — Side panel with 9 email tools for reading, searching, drafting, and sending
 - **Auto-draft on new email** — Agent automatically reads inbound emails and generates draft replies, always requiring explicit confirmation before sending
@@ -76,7 +77,7 @@ npm run deploy
 - [Workers AI](https://developers.cloudflare.com/workers-ai/) enabled (for the agent)
 - [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) configured for deployed/shared environments (required in production)
 
-Any user who passes the shared Cloudflare Access policy can access all mailboxes in this app by design. This includes the MCP server at `/mcp` -- external AI tools (Claude Code, Cursor, etc.) connected via MCP can operate on any mailbox by passing a `mailboxId` parameter. There is no per-mailbox authorization; the Cloudflare Access policy is the single trust boundary.
+Any user who passes the shared Cloudflare Access policy can access all mailboxes in this app by design. This includes the MCP server at `/mcp` -- external AI tools (Claude Code, Cursor, etc.) connected via MCP can operate on any mailbox by passing a `mailboxId` parameter. There is no per-mailbox authorization; the Cloudflare Access policy is the single trust boundary. Template bodies and placeholder values are treated as trusted HTML authored by an authenticated user (the same posture as the per-mailbox agent system prompt) and are not server-side sanitized.
 
 ## Architecture
 
