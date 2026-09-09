@@ -49,6 +49,12 @@ app.use("*", async (c, next) => {
 		return next();
 	}
 
+	// Public template images — recipients' mail clients fetch these with no
+	// Access identity. Bytes are only reachable via an unguessable asset UUID.
+	if (new URL(c.req.url).pathname.startsWith("/assets/t/")) {
+		return next();
+	}
+
 	const { POLICY_AUD, TEAM_DOMAIN } = c.env;
 
 	// Fail closed in production if Access is not configured.

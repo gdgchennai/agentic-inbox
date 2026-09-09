@@ -16,7 +16,11 @@
 		"DOMAINS": "gdgchennai.in",
 		"TEAM_DOMAIN": "https://gdgchennai.cloudflareaccess.com",
 		"POLICY_AUD": "6d4209ab148a9f7eb9436c86a8f84143dd6385c2f01e733bb18e289422976f88",
-		"EMAIL_ADDRESSES": []
+		"EMAIL_ADDRESSES": [],
+		// Public origin of this deployment, e.g. "https://mail.example.com".
+		// Used to build absolute <img> URLs for template images in sent email.
+		// The REST API falls back to the request origin; MCP sends need this set.
+		"PUBLIC_URL": "https://mail.gdgchennai.in"
 	},
 	"send_email": [
 		{

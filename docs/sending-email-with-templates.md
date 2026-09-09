@@ -103,9 +103,18 @@ fields, all optional.
 
 ## Uploading images
 
-Images are delivered as **inline CID attachments** so they render in every mail
-client with no external fetch (the app sits behind Access, so hosted image URLs
-would not load for recipients).
+Images are delivered as **hosted URLs** — at send time each template `<img>` is
+rewritten to an absolute URL on the public `/assets/t/<mailbox>/<assetId>` route
+(exempt from Cloudflare Access) that the recipient's mail client fetches over
+HTTPS.
+
+> **Prod setup:** the `/assets/t/*` path must be reachable without an Access
+> login. The Worker already skips its own JWT check for it, but if you protect
+> the app's hostname with a Cloudflare Access **self-hosted application**, add
+> `/assets/t/*` as a **Bypass** (or a separate unprotected app) so the edge
+> lets image requests through. Also set the `PUBLIC_URL` var to the deployment
+> origin (`https://mail.example.com`) — the REST API falls back to the request
+> origin, but MCP sends need it.
 
 **1. Upload the file** (base64, JSON body):
 
@@ -130,11 +139,10 @@ Response:
 ```
 
 At send time the Worker replaces that `<img>` with
-`<img src="cid:<assetId>@<mailbox-domain>">` and attaches the image inline
-(`Content-ID: <<assetId>@<mailbox-domain>>`). An
-`<img src="…/templates/assets/<id>">` URL is also recognized. Images inside a
-placeholder value that point at an **external** `https://` URL are left as‑is
-(hosted).
+`<img src="<PUBLIC_URL>/assets/t/<mailbox>/<assetId>">`. An
+`<img src="…/templates/assets/<id>">` URL (the in‑app, Access‑gated one used
+for editor previews) is also recognized and rewritten. Images inside a
+placeholder value that point at an **external** `https://` URL are left as‑is.
 
 Other asset routes: `GET .../templates/assets/{assetId}` (raw bytes, for
 previews), `DELETE .../templates/assets/{assetId}` (`204`).
@@ -219,8 +227,8 @@ body without appending a quoted original.
    value = supplied `placeholders[key]` → placeholder `default` → `""`.
    `text` placeholders are HTML‑escaped; `html` placeholders inserted raw.
    Tokens with no matching placeholder definition are treated as `text`.
-3. Inline template‑managed images (`data-asset-id` / asset URLs) as `cid:`
-   attachments.
+3. Rewrite template‑managed images (`data-asset-id` / in‑app asset URLs) to
+   absolute `/assets/t/...` URLs.
 4. Send. AI "draft verification" is **skipped** for template sends (it would
    flatten the HTML), so template markup and images are preserved exactly.
 

@@ -14,6 +14,8 @@ import {
 	generateMessageId,
 	buildThreadingHeaders,
 	listMailboxes,
+	getMailboxStub,
+	resolveBaseUrl,
 } from "./lib/email-helpers";
 import {
 	SendEmailRequestSchema,
@@ -90,6 +92,34 @@ app.use("/api/*", cors({
 	},
 }));
 app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
+
+// -- Public template images ---------------------------------------
+// Served without Cloudflare Access (see workers/app.ts) so recipients'
+// mail clients can load <img> in sent emails. Reachable only via the
+// unguessable asset UUID.
+
+app.get("/assets/t/:mailboxId/:assetId", async (c) => {
+	const mailboxId = decodeURIComponent(c.req.param("mailboxId")!);
+	const assetId = c.req.param("assetId")!;
+	if (!(await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`))) {
+		return c.json({ error: "Not found" }, 404);
+	}
+	const stub = getMailboxStub(c.env, mailboxId) as unknown as {
+		getTemplateAsset: (id: string) => Promise<{ filename: string; mimetype: string } | null>;
+	};
+	const asset = await stub.getTemplateAsset(assetId);
+	if (!asset) return c.json({ error: "Not found" }, 404);
+	const obj = await c.env.BUCKET.get(
+		`template-assets/${mailboxId}/${assetId}/${asset.filename}`,
+	);
+	if (!obj) return c.json({ error: "Not found" }, 404);
+	return new Response(obj.body, {
+		headers: {
+			"Content-Type": asset.mimetype,
+			"Cache-Control": "public, max-age=86400",
+		},
+	});
+});
 
 // -- Config ---------------------------------------------------------
 
@@ -178,7 +208,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, from, in_reply_to, references, thread_id } = body;
 
-	const built = await buildSendBody(c.env, mailboxId, body);
+	const built = await buildSendBody(c.env, mailboxId, body, resolveBaseUrl(c.env, c.req.url));
 	if ("error" in built) return c.json({ error: built.error }, 404);
 	const { subject, html, text, attachments } = built;
 

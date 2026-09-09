@@ -25,12 +25,12 @@ import {
 	generateMessageId,
 	buildReferencesChain,
 	buildThreadingHeaders,
+	resolveBaseUrl,
 } from "./email-helpers";
 import { verifyDraft } from "./ai";
 import {
 	resolveTemplateForSend,
 	renderTemplateForDraft,
-	type InlineAttachment,
 } from "./templates";
 import { sendEmail } from "../email-sender";
 import { Folders } from "../../shared/folders";
@@ -77,9 +77,13 @@ interface TemplateParams {
 
 /**
  * Resolve the outgoing body for a tool call. When `templateId` is set the
- * template is rendered (with images inlined) and AI draft verification is
- * skipped — verifyDraft flattens HTML to text and would destroy the layout.
- * Otherwise the plain body is run through verifyDraft as before.
+ * template is rendered (images pointed at the public asset route) and AI
+ * draft verification is skipped — verifyDraft flattens HTML to text and
+ * would destroy the layout. Otherwise the plain body is run through
+ * verifyDraft as before.
+ *
+ * Template images need an absolute origin: set the `PUBLIC_URL` var, since
+ * MCP calls have no request to derive one from.
  */
 async function resolveToolBody(
 	env: Env,
@@ -87,7 +91,7 @@ async function resolveToolBody(
 	rawBody: string,
 	tpl: TemplateParams,
 ): Promise<
-	| { html: string; templateSubject?: string; attachments: InlineAttachment[] }
+	| { html: string; templateSubject?: string }
 	| { error: string }
 > {
 	if (tpl.templateId) {
@@ -96,19 +100,16 @@ async function resolveToolBody(
 			mailboxId,
 			tpl.templateId,
 			tpl.placeholders ?? {},
+			resolveBaseUrl(env, ""),
 		);
 		if ("error" in resolved) return resolved;
-		return {
-			html: resolved.html,
-			templateSubject: resolved.subject,
-			attachments: resolved.attachments,
-		};
+		return { html: resolved.html, templateSubject: resolved.subject };
 	}
 	const sanitized = await verifyDraft(env.AI, rawBody);
 	if (!sanitized) {
 		return { error: "Draft verification failed — please try again." };
 	}
-	return { html: sanitized, attachments: [] };
+	return { html: sanitized };
 }
 
 // ── list_mailboxes ─────────────────────────────────────────────────
@@ -543,9 +544,6 @@ export async function toolSendReply(
 			subject,
 			html: fullBodyHtml,
 			headers: buildThreadingHeaders(originalMsgId, references),
-			...(resolvedBody.attachments.length
-				? { attachments: resolvedBody.attachments }
-				: {}),
 		});
 	} catch (e) {
 		console.error("Email send failed:", (e as Error).message);
@@ -613,9 +611,6 @@ export async function toolSendEmail(
 			from: mailboxId,
 			subject,
 			html: resolvedBody.html,
-			...(resolvedBody.attachments.length
-				? { attachments: resolvedBody.attachments }
-				: {}),
 		});
 	} catch (e) {
 		console.error("Email send failed:", (e as Error).message);

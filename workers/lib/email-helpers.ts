@@ -29,6 +29,21 @@ export function getMailboxStub(
 	return ns.get(id);
 }
 
+/**
+ * The deployment's public origin, used to build absolute `<img>` URLs in
+ * outgoing email. Prefers the `PUBLIC_URL` var; falls back to the current
+ * request's origin (fine for the REST API, which is served from that host).
+ */
+export function resolveBaseUrl(env: Env, requestUrl: string): string {
+	const configured = (env as { PUBLIC_URL?: string }).PUBLIC_URL;
+	if (configured) return configured.replace(/\/+$/, "");
+	try {
+		return new URL(requestUrl).origin;
+	} catch {
+		return "";
+	}
+}
+
 // ── Mailbox Listing ────────────────────────────────────────────────
 
 /**
