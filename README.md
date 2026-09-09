@@ -44,6 +44,10 @@ https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
 - **Auto-draft on new email** — Agent automatically reads inbound emails and generates draft replies, always requiring explicit confirmation before sending
 - **Configurable and persistent** — Custom system prompts per mailbox, persistent chat history, streaming markdown responses, and tool call visibility
 
+## Documentation
+
+- [Sending email with templates (API & MCP)](docs/sending-email-with-templates.md) — create templates, upload inline images, and send/reply from them over REST or MCP.
+
 ## Stack
 
 - **Frontend:** React 19, React Router v7, Tailwind CSS, Zustand, TipTap, `@cloudflare/kumo`
