@@ -13,8 +13,10 @@
 		// Production deploys must also define POLICY_AUD and TEAM_DOMAIN.
 		// TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
 		// The worker now fails closed outside local development if Access is not configured.
-		"DOMAINS": "example.com",
-		"EMAIL_ADDRESSES": []
+		"DOMAINS": "gdgchennai.in",
+		"TEAM_DOMAIN": "https://gdgchennai.cloudflareaccess.com",
+		"POLICY_AUD": "6d4209ab148a9f7eb9436c86a8f84143dd6385c2f01e733bb18e289422976f88",
+		"EMAIL_ADDRESSES": ["hello@gdgchennai.in"]
 	},
 	"send_email": [
 		{
