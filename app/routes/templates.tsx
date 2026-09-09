@@ -24,7 +24,11 @@ import {
 	useState,
 } from "react";
 import { useParams } from "react-router";
-import { extractTokenKeys, type TemplatePlaceholder } from "shared/templates";
+import {
+	extractTokenKeys,
+	isRawEmailHtml,
+	type TemplatePlaceholder,
+} from "shared/templates";
 import RichTextEditor from "~/components/RichTextEditor";
 
 const EmailBuilder = lazy(() => import("~/components/EmailBuilder"));
@@ -53,11 +57,6 @@ const EMPTY_DRAFT: DraftState = {
 	body: "",
 	placeholders: [],
 };
-
-/** Heuristic: body has markup the WYSIWYG editor would mangle. */
-function looksLikeRawHtml(body: string): boolean {
-	return /<table|<style|<!--|\bstyle=|<head|<body|<!doctype/i.test(body);
-}
 
 function toDraft(t: EmailTemplate): DraftState {
 	return {
@@ -174,7 +173,7 @@ export default function TemplatesRoute() {
 
 	const changeBodyMode = (next: BodyMode) => {
 		if (next === bodyMode) return;
-		if (next === "visual" && /<table|<style|<!--|\bstyle=/i.test(draft?.body ?? "")) {
+		if (next === "visual" && isRawEmailHtml(draft?.body)) {
 			if (
 				!window.confirm(
 					"The visual (rich text) editor may drop table layouts, inline styles, comments, and other raw HTML it doesn't recognize. Switch anyway?",
@@ -517,7 +516,7 @@ export default function TemplatesRoute() {
 									size="xs"
 									onClick={() => {
 										setError(null);
-										setBodyMode(looksLikeRawHtml(t.body ?? "") ? "html" : "visual");
+										setBodyMode(isRawEmailHtml(t.body) ? "html" : "visual");
 										setDraft(toDraft(t));
 									}}
 								>
