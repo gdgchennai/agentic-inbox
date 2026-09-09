@@ -15,7 +15,7 @@ import {
 	buildThreadingHeaders,
 	listMailboxes,
 	getMailboxStub,
-	resolveBaseUrl,
+	resolveAssetBaseUrl,
 } from "./lib/email-helpers";
 import {
 	SendEmailRequestSchema,
@@ -208,7 +208,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, from, in_reply_to, references, thread_id } = body;
 
-	const built = await buildSendBody(c.env, mailboxId, body, resolveBaseUrl(c.env, c.req.url));
+	const built = await buildSendBody(c.env, mailboxId, body, resolveAssetBaseUrl(c.env, c.req.url));
 	if ("error" in built) return c.json({ error: built.error }, 404);
 	const { subject, html, text, attachments } = built;
 

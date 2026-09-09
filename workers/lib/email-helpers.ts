@@ -30,12 +30,15 @@ export function getMailboxStub(
 }
 
 /**
- * The deployment's public origin, used to build absolute `<img>` URLs in
- * outgoing email. Prefers the `PUBLIC_URL` var; falls back to the current
- * request's origin (fine for the REST API, which is served from that host).
+ * The origin used to build absolute `<img>` URLs for template images in
+ * outgoing email. Preference:
+ *   1. `ASSET_URL`  — a dedicated host with no Cloudflare Access (recommended)
+ *   2. `PUBLIC_URL` — the app's own origin
+ *   3. the current request's origin (REST only; empty for MCP)
  */
-export function resolveBaseUrl(env: Env, requestUrl: string): string {
-	const configured = (env as { PUBLIC_URL?: string }).PUBLIC_URL;
+export function resolveAssetBaseUrl(env: Env, requestUrl: string): string {
+	const e = env as { ASSET_URL?: string; PUBLIC_URL?: string };
+	const configured = e.ASSET_URL || e.PUBLIC_URL;
 	if (configured) return configured.replace(/\/+$/, "");
 	try {
 		return new URL(requestUrl).origin;

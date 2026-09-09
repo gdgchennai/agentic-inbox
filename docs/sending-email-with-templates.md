@@ -104,17 +104,24 @@ fields, all optional.
 ## Uploading images
 
 Images are delivered as **hosted URLs** — at send time each template `<img>` is
-rewritten to an absolute URL on the public `/assets/t/<mailbox>/<assetId>` route
-(exempt from Cloudflare Access) that the recipient's mail client fetches over
-HTTPS.
+rewritten to an absolute URL on the `/assets/t/<mailbox>/<assetId>` route that
+the recipient's mail client fetches over HTTPS.
 
-> **Prod setup:** the `/assets/t/*` path must be reachable without an Access
-> login. The Worker already skips its own JWT check for it, but if you protect
-> the app's hostname with a Cloudflare Access **self-hosted application**, add
-> `/assets/t/*` as a **Bypass** (or a separate unprotected app) so the edge
-> lets image requests through. Also set the `PUBLIC_URL` var to the deployment
-> origin (`https://mail.example.com`) — the REST API falls back to the request
-> origin, but MCP sends need it.
+> **Prod setup — the image host must not require a Cloudflare Access login.**
+> Two ways:
+>
+> 1. **Dedicated host (recommended).** Add a second Workers custom domain, e.g.
+>    `img.example.com`, pointed at this Worker, and **do not** put it in any
+>    Access application. Set `ASSET_URL` to `https://img.example.com`. The
+>    Worker serves only `/assets/t/*` on that host (everything else 404s), so
+>    the app/API is not exposed there.
+> 2. **Bypass the path on the main host.** Add `/assets/t/*` as a **Bypass**
+>    policy (a separate path-scoped Access application). Fiddly — the path must
+>    be its own field and beat the main app's path specificity.
+>
+> Also set `PUBLIC_URL` to the deployment origin. Resolution order for image
+> `<src>`: `ASSET_URL` → `PUBLIC_URL` → the request's origin (REST only; MCP
+> sends have no request, so they need one of the vars set).
 
 **1. Upload the file** (base64, JSON body):
 
@@ -139,7 +146,7 @@ Response:
 ```
 
 At send time the Worker replaces that `<img>` with
-`<img src="<PUBLIC_URL>/assets/t/<mailbox>/<assetId>">`. An
+`<img src="<ASSET_URL|PUBLIC_URL>/assets/t/<mailbox>/<assetId>">`. An
 `<img src="…/templates/assets/<id>">` URL (the in‑app, Access‑gated one used
 for editor previews) is also recognized and rewritten. Images inside a
 placeholder value that point at an **external** `https://` URL are left as‑is.

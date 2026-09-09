@@ -25,7 +25,7 @@ import {
 	generateMessageId,
 	buildReferencesChain,
 	buildThreadingHeaders,
-	resolveBaseUrl,
+	resolveAssetBaseUrl,
 } from "./email-helpers";
 import { verifyDraft } from "./ai";
 import {
@@ -100,7 +100,7 @@ async function resolveToolBody(
 			mailboxId,
 			tpl.templateId,
 			tpl.placeholders ?? {},
-			resolveBaseUrl(env, ""),
+			resolveAssetBaseUrl(env, ""),
 		);
 		if ("error" in resolved) return resolved;
 		return { html: resolved.html, templateSubject: resolved.subject };

@@ -13,7 +13,7 @@ import {
 	buildReferencesChain,
 	buildThreadingHeaders,
 	resolveOriginalEmail,
-	resolveBaseUrl,
+	resolveAssetBaseUrl,
 } from "../lib/email-helpers";
 import { SendEmailRequestSchema } from "../lib/schemas";
 import { buildSendBody } from "../lib/templates";
@@ -29,7 +29,7 @@ export async function handleReplyEmail(c: AppContext) {
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, from } = body;
 
-	const built = await buildSendBody(c.env, mailboxId, body, resolveBaseUrl(c.env, c.req.url));
+	const built = await buildSendBody(c.env, mailboxId, body, resolveAssetBaseUrl(c.env, c.req.url));
 	if ("error" in built) return c.json({ error: built.error }, 404);
 	const { subject, html, text, attachments } = built;
 
@@ -124,7 +124,7 @@ export async function handleForwardEmail(c: AppContext) {
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, from } = body;
 
-	const built = await buildSendBody(c.env, mailboxId, body, resolveBaseUrl(c.env, c.req.url));
+	const built = await buildSendBody(c.env, mailboxId, body, resolveAssetBaseUrl(c.env, c.req.url));
 	if ("error" in built) return c.json({ error: built.error }, 404);
 	const { subject, html, text, attachments } = built;
 

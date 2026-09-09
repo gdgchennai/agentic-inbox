@@ -20,7 +20,12 @@
 		// Public origin of this deployment, e.g. "https://mail.example.com".
 		// Used to build absolute <img> URLs for template images in sent email.
 		// The REST API falls back to the request origin; MCP sends need this set.
-		"PUBLIC_URL": "https://mail.gdgchennai.in"
+		"PUBLIC_URL": "https://mail.gdgchennai.in",
+		// Optional dedicated host for template images, e.g. "https://img.example.com".
+		// Point this Worker's route at that hostname and leave it OUT of any
+		// Cloudflare Access app — the Worker only serves /assets/t/* there.
+		// Preferred over PUBLIC_URL for image <src> when set.
+		"ASSET_URL": "https://mail-attachments.gdgchennai.in"
 	},
 	"send_email": [
 		{

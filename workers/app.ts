@@ -44,6 +44,23 @@ const app = new Hono<{ Bindings: Env }>();
 
 // Cloudflare Access JWT validation middleware (production only)
 app.use("*", async (c, next) => {
+	const url = new URL(c.req.url);
+
+	// Dedicated asset host (ASSET_URL): only the public image route lives here,
+	// with no Cloudflare Access. Everything else 404s so the app/API is not
+	// exposed on this hostname.
+	const assetHost = (() => {
+		try {
+			return c.env.ASSET_URL ? new URL(c.env.ASSET_URL).host : null;
+		} catch {
+			return null;
+		}
+	})();
+	if (assetHost && url.host === assetHost) {
+		if (url.pathname.startsWith("/assets/t/")) return next();
+		return c.text("Not found", 404);
+	}
+
 	// Skip validation in development
 	if (import.meta.env.DEV) {
 		return next();
@@ -51,7 +68,7 @@ app.use("*", async (c, next) => {
 
 	// Public template images — recipients' mail clients fetch these with no
 	// Access identity. Bytes are only reachable via an unguessable asset UUID.
-	if (new URL(c.req.url).pathname.startsWith("/assets/t/")) {
+	if (url.pathname.startsWith("/assets/t/")) {
 		return next();
 	}
 
