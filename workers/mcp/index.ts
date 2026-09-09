@@ -70,8 +70,17 @@ export class EmailMCP extends McpAgent<Env> {
 	});
 
 	async init() {
-		const env = this.env;
+		registerEmailMcpTools(this.server, this.env);
+	}
+}
 
+/**
+ * Register every email tool on an {@link McpServer}. Called by `EmailMCP.init()`
+ * for the live `/mcp` endpoint, and by `GET /api/v1/mcp/tools` against a throw-
+ * away server so the in-app "Available Tools" list is always the real catalogue.
+ */
+export function registerEmailMcpTools(server: McpServer, env: Env) {
+	{
 		/**
 		 * Verify a mailbox exists in R2 before operating on it.
 		 * Returns an MCP error response if the mailbox is not found, or null if valid.
@@ -101,7 +110,7 @@ export class EmailMCP extends McpAgent<Env> {
 		};
 
 		// ── list_mailboxes ─────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"list_mailboxes",
 			"List all available mailboxes",
 			{},
@@ -112,7 +121,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── list_templates ─────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"list_templates",
 			"List the saved email templates for a mailbox (id, name, subject, placeholders).",
 			{
@@ -126,7 +135,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── get_template ───────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"get_template",
 			"Get one email template with its full HTML body and placeholder definitions.",
 			{
@@ -143,7 +152,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── list_emails ────────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"list_emails",
 			"List emails in a mailbox folder. Returns email metadata (id, subject, sender, recipient, date, read/starred status, thread_id).",
 			{
@@ -172,7 +181,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── get_email ──────────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"get_email",
 			"Get a single email with its full body content. Use this to read the actual content of an email.",
 			{
@@ -194,7 +203,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── get_thread ─────────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"get_thread",
 			"Get all emails in a conversation thread. Returns all messages sorted chronologically.",
 			{
@@ -212,7 +221,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── search_emails ──────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"search_emails",
 			"Search for emails matching a query across subject and body fields.",
 			{
@@ -232,7 +241,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── draft_reply ────────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"draft_reply",
 			"Draft a reply to an email and save it to the Drafts folder. Does NOT send — saves a draft for review.",
 			{
@@ -266,7 +275,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── create_draft ───────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"create_draft",
 			"Create a new draft email. Can be a new email or a reply draft.",
 			{
@@ -318,7 +327,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── update_draft ───────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"update_draft",
 			"Update an existing draft email's content.",
 			{
@@ -354,7 +363,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── delete_email ───────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"delete_email",
 			"Permanently delete an email by ID.",
 			{
@@ -370,7 +379,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── send_reply ─────────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"send_reply",
 			"Send a reply to an email. Only call after drafting and getting confirmation.",
 			{
@@ -418,7 +427,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── send_email ─────────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"send_email",
 			"Send a new email (not a reply). Only call after getting confirmation.",
 			{
@@ -455,7 +464,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── mark_email_read ────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"mark_email_read",
 			"Mark an email as read or unread.",
 			{
@@ -472,7 +481,7 @@ export class EmailMCP extends McpAgent<Env> {
 		);
 
 		// ── move_email ─────────────────────────────────────────────
-		this.server.tool(
+		server.tool(
 			"move_email",
 			"Move an email to a different folder (inbox, sent, draft, archive, trash).",
 			{

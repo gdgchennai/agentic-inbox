@@ -193,6 +193,10 @@ const api = {
 		);
 	},
 
+	// MCP
+	getMcpTools: () =>
+		get<{ tools: { name: string; description: string }[] }>("/api/v1/mcp/tools"),
+
 	// Newsletters
 	listNewsletters: (mailboxId: string) =>
 		get<Newsletter[]>(`/api/v1/mailboxes/${mailboxId}/newsletters`),

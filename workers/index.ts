@@ -36,6 +36,8 @@ import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerEmailMcpTools } from "./mcp";
 
 type AppContext = Context<MailboxContext>;
 
@@ -136,6 +138,27 @@ app.get("/api/v1/config", (c) => {
 	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
 	const emailAddresses = c.env.EMAIL_ADDRESSES ?? [];
 	return c.json({ domains, emailAddresses });
+});
+
+// The real MCP tool catalogue — built by registering every tool on a throwaway
+// server and reading it back, so the in-app "Available Tools" list never drifts
+// from workers/mcp/index.ts. Names/descriptions are static, so cache it.
+let mcpToolCatalogue: { name: string; description: string }[] | null = null;
+
+app.get("/api/v1/mcp/tools", (c) => {
+	if (!mcpToolCatalogue) {
+		const probe = new McpServer({ name: "probe", version: "0" });
+		registerEmailMcpTools(probe, c.env);
+		const registered = (
+			probe as unknown as {
+				_registeredTools: Record<string, { description?: string }>;
+			}
+		)._registeredTools;
+		mcpToolCatalogue = Object.entries(registered)
+			.map(([name, t]) => ({ name, description: t.description ?? "" }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+	}
+	return c.json({ tools: mcpToolCatalogue });
 });
 
 // -- Mailboxes ------------------------------------------------------
