@@ -1049,6 +1049,7 @@ export class MailboxDO extends DurableObject<Env> {
 	// ── Newsletters (bulk send job) ────────────────────────────────
 
 	async listNewsletters() {
+		this.#reconcileNewsletters();
 		return this.db
 			.select()
 			.from(schema.newsletters)
@@ -1148,7 +1149,37 @@ export class MailboxDO extends DurableObject<Env> {
 		return this.getNewsletter(id);
 	}
 
+	/** Close out any `sending` newsletter that has no pending recipients left. */
+	#reconcileNewsletters() {
+		const stuck = this.db
+			.select({ id: schema.newsletters.id })
+			.from(schema.newsletters)
+			.where(eq(schema.newsletters.status, "sending"))
+			.all();
+		const now = new Date().toISOString();
+		for (const s of stuck) {
+			const pending = this.db
+				.select({ c: sql<number>`count(*)` })
+				.from(schema.newsletterRecipients)
+				.where(
+					and(
+						eq(schema.newsletterRecipients.newsletter_id, s.id),
+						eq(schema.newsletterRecipients.status, "pending"),
+					),
+				)
+				.get();
+			if ((pending?.c ?? 0) === 0) {
+				this.db
+					.update(schema.newsletters)
+					.set({ status: "completed", completed_at: now, updated_at: now })
+					.where(eq(schema.newsletters.id, s.id))
+					.run();
+			}
+		}
+	}
+
 	async startNewsletter(id: string) {
+		this.#reconcileNewsletters();
 		const nl = this.db
 			.select()
 			.from(schema.newsletters)

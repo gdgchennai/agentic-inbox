@@ -557,13 +557,18 @@ app.get("/api/v1/mailboxes/:mailboxId/newsletters/:id", async (c: AppContext) =>
 	return nl ? c.json(nl) : c.json({ error: "Newsletter not found" }, 404);
 });
 
+// A newsletter row has its own nullable `error` column, so `"error" in result`
+// is true even on success — a failure is specifically `{ error: <string> }`.
+const isNlError = (r: Record<string, unknown>): r is { error: string } =>
+	typeof r.error === "string";
+
 for (const action of ["start", "pause", "resume", "cancel"] as const) {
 	app.post(
 		`/api/v1/mailboxes/:mailboxId/newsletters/:id/${action}`,
 		async (c: AppContext) => {
 			const fn = `${action}Newsletter` as const;
 			const result = await nlStub(c)[fn](c.req.param("id")!);
-			if ("error" in result) {
+			if (isNlError(result)) {
 				return c.json(result, result.error === "Newsletter not found" ? 404 : 400);
 			}
 			return c.json(result);
@@ -573,7 +578,7 @@ for (const action of ["start", "pause", "resume", "cancel"] as const) {
 
 app.delete("/api/v1/mailboxes/:mailboxId/newsletters/:id", async (c: AppContext) => {
 	const result = await nlStub(c).deleteNewsletter(c.req.param("id")!);
-	if ("error" in result) {
+	if (isNlError(result)) {
 		return c.json(result, result.error === "Newsletter not found" ? 404 : 400);
 	}
 	return c.body(null, 204);
