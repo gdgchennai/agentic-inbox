@@ -52,6 +52,23 @@ export function toEmailListValue(addresses: string[]): string | string[] | undef
 }
 
 /**
+ * Append addresses to a comma-separated recipient string, skipping any already
+ * present (case-insensitive). Returns the new comma-joined string.
+ */
+export function appendAddresses(current: string, add: string[]): string {
+	const existing = splitEmailList(current);
+	const seen = new Set(existing.map((a) => a.toLowerCase()));
+	for (const a of add) {
+		const t = a.trim();
+		if (t && !seen.has(t.toLowerCase())) {
+			seen.add(t.toLowerCase());
+			existing.push(t);
+		}
+	}
+	return existing.join(", ");
+}
+
+/**
  * Convert HTML content to plain text.
  * Uses DOM APIs so must only be called client-side.
  */

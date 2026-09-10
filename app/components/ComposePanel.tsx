@@ -3,10 +3,14 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Banner, Button, Input } from "@cloudflare/kumo";
-import { FloppyDiskIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
+import { AddressBookIcon, FloppyDiskIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
+import { useState } from "react";
 import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
+import { appendAddresses } from "~/lib/utils";
 import api from "~/services/api";
+import ContactBrowser from "./ContactBrowser";
+import RecipientInput from "./RecipientInput";
 import RichTextEditor from "./RichTextEditor";
 import TemplatePicker from "./TemplatePicker";
 import TemplatePreview from "./TemplatePreview";
@@ -44,6 +48,8 @@ export default function ComposePanel() {
 		previewHtml,
 	} = useComposeForm(mailboxId, folder);
 
+	const [browseOpen, setBrowseOpen] = useState(false);
+
 	return (
 		<div className="flex flex-col h-full bg-kumo-base">
 			<div className="flex items-center justify-between px-4 py-3 border-b border-kumo-line shrink-0 md:px-6">
@@ -76,13 +82,23 @@ export default function ComposePanel() {
 								To
 							</label>
 							<div className="flex-1 flex items-center gap-2 min-w-0">
-								<Input
-									type="text"
-									placeholder="recipient@example.com"
+								<div className="flex-1 min-w-0">
+									<RecipientInput
+										mailboxId={mailboxId}
+										placeholder="recipient@example.com"
+										value={to}
+										onChange={setTo}
+										required
+									/>
+								</div>
+								<Button
+									type="button"
+									variant="ghost"
+									shape="square"
 									size="sm"
-									value={to}
-									onChange={(e) => setTo(e.target.value)}
-									required
+									icon={<AddressBookIcon size={16} />}
+									onClick={() => setBrowseOpen(true)}
+									aria-label="Browse contacts"
 								/>
 								{!showCcBcc && (
 									<button
@@ -95,6 +111,12 @@ export default function ComposePanel() {
 								)}
 							</div>
 						</div>
+						<ContactBrowser
+							mailboxId={mailboxId}
+							open={browseOpen}
+							onOpenChange={setBrowseOpen}
+							onAdd={(emails) => setTo(appendAddresses(to, emails))}
+						/>
 
 						{showCcBcc && (
 							<div className="flex items-center gap-2">
@@ -102,11 +124,10 @@ export default function ComposePanel() {
 									CC
 								</label>
 								<div className="flex-1">
-									<Input
-										type="text"
-										size="sm"
+									<RecipientInput
+										mailboxId={mailboxId}
 										value={cc}
-										onChange={(e) => setCc(e.target.value)}
+										onChange={setCc}
 										placeholder="Separate multiple addresses with commas"
 									/>
 								</div>
@@ -119,11 +140,10 @@ export default function ComposePanel() {
 									BCC
 								</label>
 								<div className="flex-1">
-									<Input
-										type="text"
-										size="sm"
+									<RecipientInput
+										mailboxId={mailboxId}
 										value={bcc}
-										onChange={(e) => setBcc(e.target.value)}
+										onChange={setBcc}
 										placeholder="Separate multiple addresses with commas"
 									/>
 								</div>

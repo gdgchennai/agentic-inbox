@@ -233,4 +233,32 @@ export const mailboxMigrations: Migration[] = [
                 ON newsletter_recipients(newsletter_id, status);
         `,
 	},
+	{
+		// No txn(): idempotent IF NOT EXISTS statements, run via transactionSync.
+		name: "11_add_contacts",
+		sql: `
+            CREATE TABLE IF NOT EXISTS contacts (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+
+            CREATE TABLE IF NOT EXISTS mail_lists (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS mail_list_members (
+                mail_list_id TEXT NOT NULL,
+                contact_id TEXT NOT NULL,
+                PRIMARY KEY (mail_list_id, contact_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mll_contact ON mail_list_members(contact_id);
+        `,
+	},
 ];

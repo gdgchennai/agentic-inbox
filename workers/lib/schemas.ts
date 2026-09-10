@@ -129,17 +129,48 @@ export const SendEmailResponseSchema = z.object({
 	status: z.string(),
 });
 
+// ── Contacts & Mail Lists ────────────────────────────────────────
+
+export const ContactBodySchema = z.object({
+	name: z.string().optional(),
+	email: z.string().email(),
+});
+
+export const ContactImportSchema = z.object({
+	csv: z.string().min(1),
+	list_ids: z.array(z.string()).optional(),
+});
+
+export const MailListBodySchema = z.object({ name: z.string().min(1) });
+
+export const MailListMembersSchema = z.object({
+	contact_ids: z.array(z.string()).min(1),
+});
+
 // ── Newsletters ──────────────────────────────────────────────────
 
-export const NewsletterValidateSchema = z.object({
-	csv: z.string(),
-	template_id: z.string().optional(),
-});
+const oneRecipientSource = (d: { csv?: string; mail_list_ids?: string[] }) => {
+	const hasCsv = !!d.csv;
+	const hasLists = !!d.mail_list_ids && d.mail_list_ids.length > 0;
+	return hasCsv !== hasLists; // exactly one
+};
+
+export const NewsletterValidateSchema = z
+	.object({
+		csv: z.string().optional(),
+		mail_list_ids: z.array(z.string()).optional(),
+		template_id: z.string().optional(),
+	})
+	.refine(oneRecipientSource, {
+		message: "Provide either 'csv' or 'mail_list_ids'",
+	});
 
 export const NewsletterCreateSchema = z
 	.object({
 		name: z.string().min(1),
-		csv: z.string().min(1),
+		csv: z.string().optional(),
+		mail_list_ids: z.array(z.string()).optional(),
+		fixed_placeholders: z.record(z.string()).optional(),
 		template_id: z.string().optional(),
 		subject: z.string().optional(),
 		body: z.string().optional(),
@@ -147,6 +178,9 @@ export const NewsletterCreateSchema = z
 		reply_to: z.string().email().optional(),
 		// ISO datetime; omitted / past = send on start
 		scheduled_at: z.string().datetime().optional(),
+	})
+	.refine(oneRecipientSource, {
+		message: "Provide either 'csv' or 'mail_list_ids'",
 	})
 	.refine((d) => d.template_id || d.body, {
 		message: "Provide a 'template_id' or a 'body'",

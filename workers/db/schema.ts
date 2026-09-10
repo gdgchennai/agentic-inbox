@@ -98,3 +98,26 @@ export const newsletterRecipients = sqliteTable("newsletter_recipients", {
 	error: text("error"),
 	sent_at: text("sent_at"),
 });
+
+/** Reusable address-book entry (see workers/lib/contacts.ts). Unique per email. */
+export const contacts = sqliteTable("contacts", {
+	id: text("id").primaryKey(),
+	email: text("email").notNull(),
+	name: text("name").notNull().default(""),
+	created_at: text("created_at").notNull(),
+	updated_at: text("updated_at").notNull(),
+});
+
+/** A named group of contacts, usable as a newsletter recipient source. */
+export const mailLists = sqliteTable("mail_lists", {
+	id: text("id").primaryKey(),
+	name: text("name").notNull(),
+	created_at: text("created_at").notNull(),
+	updated_at: text("updated_at").notNull(),
+});
+
+/** Contact ⇄ mail list many-to-many. */
+export const mailListMembers = sqliteTable("mail_list_members", {
+	mail_list_id: text("mail_list_id").notNull(),
+	contact_id: text("contact_id").notNull(),
+});

@@ -31,5 +31,13 @@ export const queryKeys = {
 		list: (mailboxId: string) => ["newsletters", mailboxId] as const,
 		detail: (mailboxId: string, id: string) => ["newsletters", mailboxId, id] as const,
 	},
+	contacts: {
+		list: (mailboxId: string, query: string) =>
+			["contacts", mailboxId, query] as const,
+	},
+	mailLists: {
+		list: (mailboxId: string) => ["mail-lists", mailboxId] as const,
+		detail: (mailboxId: string, id: string) => ["mail-lists", mailboxId, id] as const,
+	},
 	config: ["config"] as const,
 };

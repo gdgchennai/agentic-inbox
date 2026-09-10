@@ -27,6 +27,27 @@ export function requiredTemplateKeys(template: TemplateLike): string[] {
 	return [...new Set([...declared, ...extractTokenKeys(template)])];
 }
 
+/** Placeholder keys that a mail-list send can't fill from a contact (needs a fixed value). */
+export function fixedTemplateKeys(template: TemplateLike): string[] {
+	return requiredTemplateKeys(template).filter(
+		(k) => k.toLowerCase() !== "name" && k.toLowerCase() !== "email",
+	);
+}
+
+/** Build newsletter recipients from mail-list contacts + one fixed value per extra placeholder. */
+export function buildMailListRecipients(
+	contacts: { email: string; name: string }[],
+	fixedKeys: string[],
+	fixed: Record<string, string> = {},
+): NewsletterRecipientRow[] {
+	const fixedVars: Record<string, string> = {};
+	for (const k of fixedKeys) if (fixed[k] != null) fixedVars[k] = fixed[k];
+	return contacts.map((c) => ({
+		email: c.email,
+		vars: { name: c.name, email: c.email, ...fixedVars },
+	}));
+}
+
 export interface NewsletterRecipientRow {
 	email: string;
 	/** Only the columns matching `keys`, keyed exactly as in `keys`. */

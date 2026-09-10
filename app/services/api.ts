@@ -3,10 +3,14 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type {
+	Contact,
+	ContactImportResult,
 	Email,
 	EmailTemplate,
 	Folder,
 	Mailbox,
+	MailList,
+	MailListDetail,
 	Newsletter,
 	NewsletterCsvValidation,
 	TemplateAssetUpload,
@@ -197,6 +201,52 @@ const api = {
 	getMcpTools: () =>
 		get<{ tools: { name: string; description: string }[] }>("/api/v1/mcp/tools"),
 
+	// Contacts & Mail Lists
+	listContacts: (mailboxId: string, params?: Record<string, string>) =>
+		get<{ contacts: Contact[]; total: number }>(
+			`/api/v1/mailboxes/${mailboxId}/contacts`,
+			{ params },
+		),
+	upsertContact: (mailboxId: string, data: { name?: string; email: string }) =>
+		post<Contact & { created: boolean }>(
+			`/api/v1/mailboxes/${mailboxId}/contacts`,
+			data,
+		),
+	updateContact: (
+		mailboxId: string,
+		id: string,
+		data: { name?: string; email?: string },
+	) => put<Contact>(`/api/v1/mailboxes/${mailboxId}/contacts/${id}`, data),
+	deleteContact: (mailboxId: string, id: string) =>
+		del<void>(`/api/v1/mailboxes/${mailboxId}/contacts/${id}`),
+	importContacts: (
+		mailboxId: string,
+		data: { csv: string; list_ids?: string[] },
+	) =>
+		post<ContactImportResult>(
+			`/api/v1/mailboxes/${mailboxId}/contacts/import`,
+			data,
+		),
+	listMailLists: (mailboxId: string) =>
+		get<MailList[]>(`/api/v1/mailboxes/${mailboxId}/mail-lists`),
+	getMailList: (mailboxId: string, id: string) =>
+		get<MailListDetail>(`/api/v1/mailboxes/${mailboxId}/mail-lists/${id}`),
+	createMailList: (mailboxId: string, data: { name: string }) =>
+		post<MailListDetail>(`/api/v1/mailboxes/${mailboxId}/mail-lists`, data),
+	updateMailList: (mailboxId: string, id: string, data: { name: string }) =>
+		put<MailListDetail>(`/api/v1/mailboxes/${mailboxId}/mail-lists/${id}`, data),
+	deleteMailList: (mailboxId: string, id: string) =>
+		del<void>(`/api/v1/mailboxes/${mailboxId}/mail-lists/${id}`),
+	addListMembers: (mailboxId: string, id: string, contactIds: string[]) =>
+		post<MailListDetail>(
+			`/api/v1/mailboxes/${mailboxId}/mail-lists/${id}/members`,
+			{ contact_ids: contactIds },
+		),
+	removeListMember: (mailboxId: string, id: string, contactId: string) =>
+		del<void>(
+			`/api/v1/mailboxes/${mailboxId}/mail-lists/${id}/members/${contactId}`,
+		),
+
 	// Newsletters
 	listNewsletters: (mailboxId: string) =>
 		get<Newsletter[]>(`/api/v1/mailboxes/${mailboxId}/newsletters`),
@@ -204,7 +254,7 @@ const api = {
 		get<Newsletter>(`/api/v1/mailboxes/${mailboxId}/newsletters/${id}`),
 	validateNewsletterCsv: (
 		mailboxId: string,
-		data: { csv: string; template_id?: string },
+		data: { csv?: string; mail_list_ids?: string[]; template_id?: string },
 	) =>
 		post<NewsletterCsvValidation>(
 			`/api/v1/mailboxes/${mailboxId}/newsletters/validate`,
@@ -214,7 +264,9 @@ const api = {
 		mailboxId: string,
 		data: {
 			name: string;
-			csv: string;
+			csv?: string;
+			mail_list_ids?: string[];
+			fixed_placeholders?: Record<string, string>;
 			template_id?: string;
 			subject?: string;
 			body?: string;

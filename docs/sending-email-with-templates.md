@@ -250,22 +250,33 @@ at a scheduled time. Sends run in a **background alarm loop** at
 1,200/hr), separate from the interactive send limit. Newsletter sends are **not**
 written to the Sent folder — progress lives on the job.
 
-### CSV
+### Recipient source — CSV **or** mail lists
 
+A newsletter draws from **one** source (send `csv` or `mail_list_ids`, not both).
+
+**CSV**
 - Must have an **`email`** column (case-insensitive).
 - If `template_id` is set, **every** placeholder (declared keys ∪ `{{tokens}}` in
   subject/body) must be a column. Extra columns are ignored.
 - Missing a required column → the whole upload is rejected.
 - Rows with a blank/invalid email are skipped; duplicate emails
   (case-insensitive) are de-duped. Both are reported.
-- Max 20,000 recipients.
+
+**Mail lists** (`mail_list_ids: string[]`, see [Contacts & Mail Lists](#contacts--mail-lists))
+- Recipients = every contact across the selected lists, **de-duplicated by
+  email**.
+- `{{name}}` / `{{email}}` come from each contact.
+- Any other template placeholder needs one **fixed value** (`fixed_placeholders:
+  { key: value }`) applied to the whole send; blank → the template default.
+
+Max 20,000 recipients either way.
 
 ### Routes (`/api/v1/mailboxes/{mailboxId}`)
 
 | Method | Path | |
 |---|---|---|
-| POST | `/newsletters/validate` | `{ csv, template_id? }` → dry-run summary (`missingKeys`, `validCount`, `skippedInvalid`, `duplicatesRemoved`, …) |
-| POST | `/newsletters` | `{ name, csv, template_id?, subject?, body?, from_name?, reply_to?, scheduled_at? }` → creates a `draft` (`scheduled_at` is ISO; omit for "send on start") |
+| POST | `/newsletters/validate` | `{ csv?, mail_list_ids?, template_id? }` → dry-run summary (`source`, `validCount`, `missingKeys` / `fixedKeys`, …) |
+| POST | `/newsletters` | `{ name, csv? \| mail_list_ids?, fixed_placeholders?, template_id?, subject?, body?, from_name?, reply_to?, scheduled_at? }` → creates a `draft` (`scheduled_at` is ISO; omit for "send on start") |
 | POST | `/newsletters/{id}/start` | `draft`/`paused` → `sending` now, or `scheduled` if `scheduled_at` is in the future |
 | POST | `/newsletters/{id}/pause` · `/resume` · `/cancel` | state transitions |
 | GET | `/newsletters` · `/newsletters/{id}` | list / detail (`sent`, `failed`, `total`, `failedRecipients[]`) |
@@ -292,8 +303,37 @@ verification.
 
 ### UI
 
-**Send Newsletter** in the sidebar → upload CSV → validation summary → **Send
-now** / **Schedule** → watch the progress meter and failed-recipient list.
+**Send Newsletter** in the sidebar → pick a **Recipients** source (Upload CSV /
+Mail lists) → validation summary → **Send now** / **Schedule** → watch the
+progress meter and failed-recipient list.
+
+---
+
+## Contacts & Mail Lists
+
+A reusable per-mailbox address book. **Contacts** (`name` + `email`) are pickable
+in the composer's To/CC/BCC (type-ahead) and via a "Browse contacts" modal.
+**Mail lists** are named groups of contacts (many-to-many) and are a newsletter
+recipient source (above).
+
+### Routes (`/api/v1/mailboxes/{mailboxId}`)
+
+| Method | Path | |
+|---|---|---|
+| GET | `/contacts?query=&limit=&offset=` | search — each row has `listCount` |
+| POST | `/contacts` | `{ name?, email }` — **upsert by email** (updates the name) |
+| PUT / DELETE | `/contacts/:id` | delete also removes list memberships |
+| POST | `/contacts/import` | `{ csv, list_ids? }` — `email` column required, `name` optional; upsert + link to lists; returns `{ created, updated, skippedInvalid, duplicatesRemoved, addedToLists }` |
+| GET / POST | `/mail-lists` | list (with `memberCount`) / create `{ name }` |
+| GET / PUT / DELETE | `/mail-lists/:id` | detail has `members[]`; delete keeps the contacts |
+| POST | `/mail-lists/:id/members` | `{ contact_ids }` — add (idempotent) |
+| DELETE | `/mail-lists/:id/members/:contactId` | remove one |
+
+### UI
+
+**Contacts** in the sidebar → two tabs. *Contacts*: search, add one, or import a
+CSV (optionally ticking mail lists to add everyone to). *Mail lists*: create a
+list, open it to add/remove members and rename.
 
 ---
 

@@ -105,6 +105,7 @@ export interface Newsletter {
 
 export interface NewsletterCsvValidation {
 	ok: boolean;
+	source?: "csv" | "lists";
 	headers: string[];
 	requiredKeys: string[];
 	missingKeys: string[];
@@ -114,4 +115,38 @@ export interface NewsletterCsvValidation {
 	invalidSample: string[];
 	duplicatesRemoved: number;
 	tooManyRecipients: boolean;
+	/** For a mail-list source with a template: placeholder keys that need one fixed value. */
+	fixedKeys?: string[];
+}
+
+export interface Contact {
+	id: string;
+	email: string;
+	name: string;
+	listCount?: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface MailList {
+	id: string;
+	name: string;
+	memberCount?: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface MailListDetail extends MailList {
+	members: Contact[];
+	memberCount: number;
+}
+
+export interface ContactImportResult {
+	total: number;
+	created: number;
+	updated: number;
+	addedToLists: number;
+	skippedInvalid: number;
+	duplicatesRemoved: number;
+	invalidSample: string[];
 }

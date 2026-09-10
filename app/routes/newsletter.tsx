@@ -36,6 +36,7 @@ import {
 	useValidateNewsletterCsv,
 } from "~/queries/newsletter";
 import { useTemplates } from "~/queries/templates";
+import { useMailLists } from "~/queries/contacts";
 import type { NewsletterCsvValidation, NewsletterStatus } from "~/types";
 
 const STATUS_VARIANT: Record<
@@ -183,6 +184,7 @@ function NewNewsletter({
 }) {
 	const toast = useKumoToastManager();
 	const { data: templates } = useTemplates(mailboxId);
+	const { data: mailLists } = useMailLists(mailboxId);
 	const validateMutation = useValidateNewsletterCsv();
 	const createMutation = useCreateNewsletter();
 	const startMutation = useStartNewsletter();
@@ -193,8 +195,11 @@ function NewNewsletter({
 	const [body, setBody] = useState("");
 	const [fromName, setFromName] = useState("");
 	const [replyTo, setReplyTo] = useState("");
+	const [recipientMode, setRecipientMode] = useState<"csv" | "lists">("csv");
 	const [csvText, setCsvText] = useState<string | null>(null);
 	const [csvName, setCsvName] = useState("");
+	const [listIds, setListIds] = useState<string[]>([]);
+	const [fixedVars, setFixedVars] = useState<Record<string, string>>({});
 	const [validation, setValidation] = useState<NewsletterCsvValidation | null>(null);
 	const [scheduleMode, setScheduleMode] = useState<"now" | "later">("now");
 	const [scheduledLocal, setScheduledLocal] = useState("");
@@ -212,18 +217,31 @@ function NewNewsletter({
 		return [...new Set([...declared, ...extractTokenKeys(selectedTemplate)])];
 	}, [selectedTemplate]);
 
-	const runValidation = async (text: string, tid: string) => {
+	const revalidate = async (
+		next: {
+			mode?: "csv" | "lists";
+			csv?: string | null;
+			lists?: string[];
+			tid?: string;
+		} = {},
+	) => {
+		const mode = next.mode ?? recipientMode;
+		const csv = next.csv !== undefined ? next.csv : csvText;
+		const lists = next.lists ?? listIds;
+		const tid = next.tid !== undefined ? next.tid : templateId;
 		setError(null);
+		if (mode === "csv" && !csv) return setValidation(null);
+		if (mode === "lists" && lists.length === 0) return setValidation(null);
 		try {
 			const res = await validateMutation.mutateAsync({
 				mailboxId,
-				csv: text,
+				...(mode === "csv" ? { csv: csv! } : { mail_list_ids: lists }),
 				templateId: tid || undefined,
 			});
 			setValidation(res);
 		} catch (e) {
 			setValidation(null);
-			setError(e instanceof Error ? e.message : "Could not read the CSV.");
+			setError(e instanceof Error ? e.message : "Validation failed.");
 		}
 	};
 
@@ -232,23 +250,30 @@ function NewNewsletter({
 		const text = await file.text();
 		setCsvText(text);
 		setCsvName(file.name);
-		await runValidation(text, templateId);
+		await revalidate({ csv: text });
 	};
 
-	const handleTemplateChange = async (tid: string) => {
+	const handleTemplateChange = (tid: string) => {
 		setTemplateId(tid);
-		if (csvText) await runValidation(csvText, tid);
+		void revalidate({ tid });
 	};
+
+	const toggleList = (id: string, on: boolean) => {
+		const nextLists = on ? [...listIds, id] : listIds.filter((x) => x !== id);
+		setListIds(nextLists);
+		void revalidate({ lists: nextLists });
+	};
+
+	const fixedKeys = validation?.fixedKeys ?? [];
 
 	const canSubmit =
 		name.trim() &&
-		csvText &&
 		validation?.ok &&
+		(recipientMode === "csv" ? !!csvText : listIds.length > 0) &&
 		(templateId || body.trim()) &&
 		(scheduleMode === "now" || scheduledLocal);
 
 	const handleSubmit = async () => {
-		if (!csvText) return;
 		setError(null);
 		setIsSubmitting(true);
 		let scheduled_at: string | undefined;
@@ -267,7 +292,16 @@ function NewNewsletter({
 					mailboxId,
 					data: {
 						name: name.trim(),
-						csv: csvText,
+						...(recipientMode === "csv"
+							? { csv: csvText! }
+							: {
+									mail_list_ids: listIds,
+									fixed_placeholders: Object.fromEntries(
+										fixedKeys
+											.filter((k) => fixedVars[k]?.trim())
+											.map((k) => [k, fixedVars[k]]),
+									),
+								}),
 						template_id: templateId || undefined,
 						subject: subject.trim() || undefined,
 						body: templateId ? undefined : body,
@@ -329,17 +363,6 @@ function NewNewsletter({
 							</option>
 						))}
 					</select>
-					{requiredKeys.length > 0 && (
-						<p className="text-xs text-kumo-subtle mt-1.5">
-							CSV must have columns:{" "}
-							<code>email</code>
-							{requiredKeys.map((k) => (
-								<span key={k}>
-									, <code>{k}</code>
-								</span>
-							))}
-						</p>
-					)}
 				</div>
 
 				<Input
@@ -386,31 +409,105 @@ function NewNewsletter({
 			</div>
 
 			<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
-				<div className="flex items-center justify-between">
-					<Text size="sm" DANGEROUS_className="font-medium">
-						Recipients (CSV)
-					</Text>
-					<Button
-						type="button"
-						variant="secondary"
-						size="xs"
-						icon={<UploadSimpleIcon size={12} />}
-						loading={validateMutation.isPending}
-						onClick={() => fileRef.current?.click()}
-					>
-						{csvName || "Upload CSV"}
-					</Button>
-					<input
-						ref={fileRef}
-						type="file"
-						accept=".csv,text/csv"
-						className="hidden"
-						onChange={(e) => {
-							void handleFile(e.target.files?.[0]);
-							e.target.value = "";
-						}}
-					/>
+				<Text size="sm" DANGEROUS_className="font-medium">
+					Recipients
+				</Text>
+				<div className="flex gap-4 text-sm">
+					<label className="flex items-center gap-1.5">
+						<input
+							type="radio"
+							checked={recipientMode === "csv"}
+							onChange={() => {
+								setRecipientMode("csv");
+								void revalidate({ mode: "csv" });
+							}}
+						/>
+						Upload CSV
+					</label>
+					<label className="flex items-center gap-1.5">
+						<input
+							type="radio"
+							checked={recipientMode === "lists"}
+							onChange={() => {
+								setRecipientMode("lists");
+								void revalidate({ mode: "lists" });
+							}}
+						/>
+						Mail lists
+					</label>
 				</div>
+
+				{recipientMode === "csv" ? (
+					<>
+						<div className="flex items-center gap-2">
+							<Button
+								type="button"
+								variant="secondary"
+								size="xs"
+								icon={<UploadSimpleIcon size={12} />}
+								loading={validateMutation.isPending}
+								onClick={() => fileRef.current?.click()}
+							>
+								{csvName || "Upload CSV"}
+							</Button>
+							<input
+								ref={fileRef}
+								type="file"
+								accept=".csv,text/csv"
+								className="hidden"
+								onChange={(e) => {
+									void handleFile(e.target.files?.[0]);
+									e.target.value = "";
+								}}
+							/>
+						</div>
+						{requiredKeys.length > 0 && (
+							<p className="text-xs text-kumo-subtle">
+								Needs columns: <code>email</code>
+								{requiredKeys.map((k) => (
+									<span key={k}>, <code>{k}</code></span>
+								))}
+							</p>
+						)}
+					</>
+				) : !mailLists || mailLists.length === 0 ? (
+					<p className="text-xs text-kumo-subtle">
+						No mail lists yet — create one in Contacts → Mail lists.
+					</p>
+				) : (
+					<div className="flex flex-wrap gap-x-4 gap-y-1.5">
+						{mailLists.map((l) => (
+							<label key={l.id} className="flex items-center gap-1.5 text-sm">
+								<input
+									type="checkbox"
+									checked={listIds.includes(l.id)}
+									onChange={(e) => toggleList(l.id, e.target.checked)}
+								/>
+								{l.name}
+								<span className="text-xs text-kumo-subtle">({l.memberCount ?? 0})</span>
+							</label>
+						))}
+					</div>
+				)}
+
+				{recipientMode === "lists" && fixedKeys.length > 0 && (
+					<div className="space-y-2 pt-1">
+						<p className="text-xs text-kumo-subtle">
+							Values for the remaining placeholders (applied to everyone):
+						</p>
+						{fixedKeys.map((k) => (
+							<Input
+								key={k}
+								size="sm"
+								label={k}
+								value={fixedVars[k] ?? ""}
+								onChange={(e) =>
+									setFixedVars((v) => ({ ...v, [k]: e.target.value }))
+								}
+							/>
+						))}
+					</div>
+				)}
 
 				{validation && (
 					<div className="rounded-md border border-kumo-line bg-kumo-recessed p-3 text-xs space-y-1">
@@ -422,17 +519,22 @@ function NewNewsletter({
 							<p className="text-kumo-default font-medium">
 								{validation.validCount} recipient
 								{validation.validCount === 1 ? "" : "s"} ready
+								{validation.source === "lists" ? " (deduplicated)" : ""}
 							</p>
 						)}
-						<p className="text-kumo-subtle">
-							Columns: {validation.headers.join(", ") || "(none)"}
-						</p>
-						<p className="text-kumo-subtle">
-							{validation.totalRows} rows · {validation.skippedInvalid} invalid
-							email{validation.skippedInvalid === 1 ? "" : "s"} skipped ·{" "}
-							{validation.duplicatesRemoved} duplicate
-							{validation.duplicatesRemoved === 1 ? "" : "s"} removed
-						</p>
+						{validation.source === "csv" && (
+							<>
+								<p className="text-kumo-subtle">
+									Columns: {validation.headers.join(", ") || "(none)"}
+								</p>
+								<p className="text-kumo-subtle">
+									{validation.totalRows} rows · {validation.skippedInvalid} invalid
+									email{validation.skippedInvalid === 1 ? "" : "s"} skipped ·{" "}
+									{validation.duplicatesRemoved} duplicate
+									{validation.duplicatesRemoved === 1 ? "" : "s"} removed
+								</p>
+							</>
+						)}
 						{validation.tooManyRecipients && (
 							<p className="text-kumo-error">Too many recipients (max 20,000).</p>
 						)}

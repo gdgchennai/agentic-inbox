@@ -1483,4 +1483,268 @@ export class MailboxDO extends DurableObject<Env> {
 			await this.#armNewsletterAlarm();
 		}
 	}
+
+	// ── Contacts & Mail Lists ──────────────────────────────────────
+
+	async listContacts(options: { query?: string; limit?: number; offset?: number } = {}) {
+		const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+		const offset = Math.max(options.offset ?? 0, 0);
+		const like = options.query ? `%${options.query.toLowerCase()}%` : null;
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT c.*,
+				        (SELECT COUNT(*) FROM mail_list_members m WHERE m.contact_id = c.id) AS listCount
+				 FROM contacts c
+				 ${like ? "WHERE LOWER(c.name) LIKE ?1 OR LOWER(c.email) LIKE ?1" : ""}
+				 ORDER BY c.name, c.email
+				 LIMIT ${limit} OFFSET ${offset}`,
+				...(like ? [like] : []),
+			),
+		];
+		const totalRow = [
+			...this.ctx.storage.sql.exec(
+				`SELECT COUNT(*) AS n FROM contacts c ${like ? "WHERE LOWER(c.name) LIKE ?1 OR LOWER(c.email) LIKE ?1" : ""}`,
+				...(like ? [like] : []),
+			),
+		][0] as { n: number } | undefined;
+		return { contacts: rows, total: totalRow?.n ?? 0 };
+	}
+
+	async getContact(id: string) {
+		return (
+			this.db.select().from(schema.contacts).where(eq(schema.contacts.id, id)).get() ??
+			null
+		);
+	}
+
+	/** Insert a contact, or update its name if the email already exists. */
+	#upsertContactSync(name: string, email: string): { id: string; created: boolean } {
+		const normEmail = email.trim().toLowerCase();
+		const existing = this.db
+			.select({ id: schema.contacts.id, name: schema.contacts.name })
+			.from(schema.contacts)
+			.where(eq(schema.contacts.email, normEmail))
+			.get();
+		const now = new Date().toISOString();
+		if (existing) {
+			if (name && name !== existing.name) {
+				this.db
+					.update(schema.contacts)
+					.set({ name, updated_at: now })
+					.where(eq(schema.contacts.id, existing.id))
+					.run();
+			}
+			return { id: existing.id, created: false };
+		}
+		const id = crypto.randomUUID();
+		this.db
+			.insert(schema.contacts)
+			.values({ id, email: normEmail, name: name ?? "", created_at: now, updated_at: now })
+			.run();
+		return { id, created: true };
+	}
+
+	async upsertContact(data: { name?: string; email: string }) {
+		const res = this.#upsertContactSync(data.name ?? "", data.email);
+		return { ...(await this.getContact(res.id)), created: res.created };
+	}
+
+	async updateContact(id: string, data: { name?: string; email?: string }) {
+		const contact = this.db
+			.select()
+			.from(schema.contacts)
+			.where(eq(schema.contacts.id, id))
+			.get();
+		if (!contact) return { error: "Contact not found" };
+		const patch: Partial<typeof schema.contacts.$inferInsert> = {
+			updated_at: new Date().toISOString(),
+		};
+		if (data.name !== undefined) patch.name = data.name;
+		if (data.email !== undefined) {
+			const normEmail = data.email.trim().toLowerCase();
+			const clash = this.db
+				.select({ id: schema.contacts.id })
+				.from(schema.contacts)
+				.where(and(eq(schema.contacts.email, normEmail), ne(schema.contacts.id, id)))
+				.get();
+			if (clash) return { error: "Another contact already uses that email" };
+			patch.email = normEmail;
+		}
+		this.db.update(schema.contacts).set(patch).where(eq(schema.contacts.id, id)).run();
+		return this.getContact(id);
+	}
+
+	async deleteContact(id: string) {
+		const contact = this.db
+			.select({ id: schema.contacts.id })
+			.from(schema.contacts)
+			.where(eq(schema.contacts.id, id))
+			.get();
+		if (!contact) return { error: "Contact not found" };
+		this.ctx.storage.transactionSync(() => {
+			this.db
+				.delete(schema.mailListMembers)
+				.where(eq(schema.mailListMembers.contact_id, id))
+				.run();
+			this.db.delete(schema.contacts).where(eq(schema.contacts.id, id)).run();
+		});
+		return { status: "deleted" };
+	}
+
+	async importContacts(
+		rows: { name: string; email: string }[],
+		listIds: string[] = [],
+	) {
+		let created = 0;
+		let updated = 0;
+		const validLists = this.db
+			.select({ id: schema.mailLists.id })
+			.from(schema.mailLists)
+			.all()
+			.map((l) => l.id);
+		const targetLists = listIds.filter((id) => validLists.includes(id));
+
+		this.ctx.storage.transactionSync(() => {
+			for (const r of rows) {
+				const res = this.#upsertContactSync(r.name, r.email);
+				res.created ? created++ : updated++;
+				for (const listId of targetLists) {
+					this.#linkMemberSync(listId, res.id);
+				}
+			}
+		});
+		return { total: rows.length, created, updated, addedToLists: targetLists.length };
+	}
+
+	// ── Mail lists ────────────────────────────────────────────────
+
+	async listMailLists() {
+		return [
+			...this.ctx.storage.sql.exec(
+				`SELECT l.*,
+				        (SELECT COUNT(*) FROM mail_list_members m WHERE m.mail_list_id = l.id) AS memberCount
+				 FROM mail_lists l ORDER BY l.name`,
+			),
+		];
+	}
+
+	async getMailList(id: string, options: { limit?: number; offset?: number } = {}) {
+		const list = this.db
+			.select()
+			.from(schema.mailLists)
+			.where(eq(schema.mailLists.id, id))
+			.get();
+		if (!list) return null;
+		const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+		const offset = Math.max(options.offset ?? 0, 0);
+		const members = [
+			...this.ctx.storage.sql.exec(
+				`SELECT c.* FROM contacts c
+				 JOIN mail_list_members m ON m.contact_id = c.id
+				 WHERE m.mail_list_id = ?1
+				 ORDER BY c.name, c.email
+				 LIMIT ${limit} OFFSET ${offset}`,
+				id,
+			),
+		];
+		const countRow = [
+			...this.ctx.storage.sql.exec(
+				`SELECT COUNT(*) AS n FROM mail_list_members WHERE mail_list_id = ?1`,
+				id,
+			),
+		][0] as { n: number } | undefined;
+		return { ...list, members, memberCount: countRow?.n ?? 0 };
+	}
+
+	async createMailList(data: { name: string }) {
+		const id = crypto.randomUUID();
+		const now = new Date().toISOString();
+		this.db
+			.insert(schema.mailLists)
+			.values({ id, name: data.name, created_at: now, updated_at: now })
+			.run();
+		return this.getMailList(id);
+	}
+
+	async updateMailList(id: string, data: { name: string }) {
+		const list = this.db
+			.select({ id: schema.mailLists.id })
+			.from(schema.mailLists)
+			.where(eq(schema.mailLists.id, id))
+			.get();
+		if (!list) return { error: "Mail list not found" };
+		this.db
+			.update(schema.mailLists)
+			.set({ name: data.name, updated_at: new Date().toISOString() })
+			.where(eq(schema.mailLists.id, id))
+			.run();
+		return this.getMailList(id);
+	}
+
+	async deleteMailList(id: string) {
+		const list = this.db
+			.select({ id: schema.mailLists.id })
+			.from(schema.mailLists)
+			.where(eq(schema.mailLists.id, id))
+			.get();
+		if (!list) return { error: "Mail list not found" };
+		this.ctx.storage.transactionSync(() => {
+			this.db
+				.delete(schema.mailListMembers)
+				.where(eq(schema.mailListMembers.mail_list_id, id))
+				.run();
+			this.db.delete(schema.mailLists).where(eq(schema.mailLists.id, id)).run();
+		});
+		return { status: "deleted" };
+	}
+
+	#linkMemberSync(listId: string, contactId: string) {
+		this.ctx.storage.sql.exec(
+			`INSERT OR IGNORE INTO mail_list_members (mail_list_id, contact_id) VALUES (?1, ?2)`,
+			listId,
+			contactId,
+		);
+	}
+
+	async addContactsToList(listId: string, contactIds: string[]) {
+		const list = this.db
+			.select({ id: schema.mailLists.id })
+			.from(schema.mailLists)
+			.where(eq(schema.mailLists.id, listId))
+			.get();
+		if (!list) return { error: "Mail list not found" };
+		this.ctx.storage.transactionSync(() => {
+			for (const cid of contactIds) this.#linkMemberSync(listId, cid);
+		});
+		return this.getMailList(listId);
+	}
+
+	async removeContactFromList(listId: string, contactId: string) {
+		this.db
+			.delete(schema.mailListMembers)
+			.where(
+				and(
+					eq(schema.mailListMembers.mail_list_id, listId),
+					eq(schema.mailListMembers.contact_id, contactId),
+				),
+			)
+			.run();
+		return { status: "removed" };
+	}
+
+	/** All contacts across the given lists, de-duplicated by email. */
+	async getMailListRecipients(listIds: string[]): Promise<{ email: string; name: string }[]> {
+		if (listIds.length === 0) return [];
+		const placeholders = listIds.map((_, i) => `?${i + 1}`).join(",");
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT DISTINCT c.email AS email, c.name AS name
+				 FROM contacts c
+				 JOIN mail_list_members m ON m.contact_id = c.id
+				 WHERE m.mail_list_id IN (${placeholders})`,
+				...listIds,
+			),
+		] as { email: string; name: string }[];
+		return rows;
+	}
 }

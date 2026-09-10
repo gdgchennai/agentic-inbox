@@ -4,6 +4,7 @@
 
 import { Badge, Button, Dialog, Input, Tooltip } from "@cloudflare/kumo";
 import {
+	AddressBookIcon,
 	ArchiveIcon,
 	CaretLeftIcon,
 	FileIcon,
@@ -175,6 +176,13 @@ export default function Sidebar() {
 					to={`/mailbox/${mailboxId}/templates`}
 					icon={<FileTextIcon size={18} weight="regular" />}
 					label="Templates"
+					onClick={handleNavClick}
+				/>
+
+				<FolderLink
+					to={`/mailbox/${mailboxId}/contacts`}
+					icon={<AddressBookIcon size={18} weight="regular" />}
+					label="Contacts"
 					onClick={handleNavClick}
 				/>
 

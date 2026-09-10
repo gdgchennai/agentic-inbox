@@ -24,13 +24,20 @@ import {
 	TemplateAssetBodySchema,
 	NewsletterValidateSchema,
 	NewsletterCreateSchema,
+	ContactBodySchema,
+	ContactImportSchema,
+	MailListBodySchema,
+	MailListMembersSchema,
 } from "./lib/schemas";
 import { buildSendBody, renderTemplateForDraft } from "./lib/templates";
 import {
 	validateNewsletterCsv,
 	requiredTemplateKeys,
+	fixedTemplateKeys,
+	buildMailListRecipients,
 	MAX_NEWSLETTER_RECIPIENTS,
 } from "./lib/newsletter";
+import { validateContactsCsv, MAX_CONTACTS } from "./lib/contacts";
 import type { TemplatePlaceholder } from "../shared/templates";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
@@ -473,6 +480,124 @@ app.delete(
 	},
 );
 
+// -- Contacts & Mail Lists ---------------------------------------
+
+type ContactStub = {
+	listContacts: (o: { query?: string; limit?: number; offset?: number }) => Promise<{
+		contacts: unknown[];
+		total: number;
+	}>;
+	getContact: (id: string) => Promise<unknown | null>;
+	upsertContact: (data: unknown) => Promise<Record<string, unknown>>;
+	updateContact: (id: string, data: unknown) => Promise<Record<string, unknown> | null>;
+	deleteContact: (id: string) => Promise<Record<string, unknown>>;
+	importContacts: (
+		rows: { name: string; email: string }[],
+		listIds: string[],
+	) => Promise<Record<string, unknown>>;
+	listMailLists: () => Promise<unknown[]>;
+	getMailList: (id: string) => Promise<unknown | null>;
+	createMailList: (data: unknown) => Promise<unknown>;
+	updateMailList: (id: string, data: unknown) => Promise<Record<string, unknown> | null>;
+	deleteMailList: (id: string) => Promise<Record<string, unknown>>;
+	addContactsToList: (listId: string, contactIds: string[]) => Promise<Record<string, unknown> | null>;
+	removeContactFromList: (listId: string, contactId: string) => Promise<Record<string, unknown>>;
+};
+
+const cStub = (c: AppContext) => c.var.mailboxStub as unknown as ContactStub;
+const isDoError = (r: Record<string, unknown>): r is { error: string } =>
+	typeof r.error === "string";
+
+app.get("/api/v1/mailboxes/:mailboxId/contacts", async (c: AppContext) => {
+	return c.json(
+		await cStub(c).listContacts({
+			query: c.req.query("query") || undefined,
+			limit: intQuery(c, "limit"),
+			offset: intQuery(c, "offset"),
+		}),
+	);
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/contacts", async (c: AppContext) => {
+	const data = ContactBodySchema.parse(await c.req.json());
+	return c.json(await cStub(c).upsertContact(data), 201);
+});
+
+app.put("/api/v1/mailboxes/:mailboxId/contacts/:id", async (c: AppContext) => {
+	const data = ContactBodySchema.partial().parse(await c.req.json());
+	const result = await cStub(c).updateContact(c.req.param("id")!, data);
+	if (!result) return c.json({ error: "Contact not found" }, 404);
+	if (isDoError(result)) {
+		return c.json(result, result.error === "Contact not found" ? 404 : 400);
+	}
+	return c.json(result);
+});
+
+app.delete("/api/v1/mailboxes/:mailboxId/contacts/:id", async (c: AppContext) => {
+	const result = await cStub(c).deleteContact(c.req.param("id")!);
+	if (isDoError(result)) return c.json(result, 404);
+	return c.body(null, 204);
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/contacts/import", async (c: AppContext) => {
+	const { csv, list_ids } = ContactImportSchema.parse(await c.req.json());
+	const v = validateContactsCsv(csv);
+	if (!v.hasEmailColumn) return c.json({ error: "CSV is missing an 'email' column" }, 400);
+	if (v.tooMany) return c.json({ error: `Too many contacts (max ${MAX_CONTACTS})` }, 400);
+	if (v.rows.length === 0) return c.json({ error: "No valid contacts in the CSV" }, 400);
+	const result = await cStub(c).importContacts(v.rows, list_ids ?? []);
+	return c.json(
+		{ ...result, skippedInvalid: v.skippedInvalid, duplicatesRemoved: v.duplicatesRemoved, invalidSample: v.invalidSample },
+		201,
+	);
+});
+
+app.get("/api/v1/mailboxes/:mailboxId/mail-lists", async (c: AppContext) => {
+	return c.json(await cStub(c).listMailLists());
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/mail-lists", async (c: AppContext) => {
+	const data = MailListBodySchema.parse(await c.req.json());
+	return c.json(await cStub(c).createMailList(data), 201);
+});
+
+app.get("/api/v1/mailboxes/:mailboxId/mail-lists/:id", async (c: AppContext) => {
+	const list = await cStub(c).getMailList(c.req.param("id")!);
+	return list ? c.json(list) : c.json({ error: "Mail list not found" }, 404);
+});
+
+app.put("/api/v1/mailboxes/:mailboxId/mail-lists/:id", async (c: AppContext) => {
+	const data = MailListBodySchema.parse(await c.req.json());
+	const result = await cStub(c).updateMailList(c.req.param("id")!, data);
+	if (!result || isDoError(result as Record<string, unknown>)) {
+		return c.json({ error: "Mail list not found" }, 404);
+	}
+	return c.json(result);
+});
+
+app.delete("/api/v1/mailboxes/:mailboxId/mail-lists/:id", async (c: AppContext) => {
+	const result = await cStub(c).deleteMailList(c.req.param("id")!);
+	if (isDoError(result)) return c.json(result, 404);
+	return c.body(null, 204);
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/mail-lists/:id/members", async (c: AppContext) => {
+	const { contact_ids } = MailListMembersSchema.parse(await c.req.json());
+	const result = await cStub(c).addContactsToList(c.req.param("id")!, contact_ids);
+	if (!result || isDoError(result as Record<string, unknown>)) {
+		return c.json({ error: "Mail list not found" }, 404);
+	}
+	return c.json(result);
+});
+
+app.delete(
+	"/api/v1/mailboxes/:mailboxId/mail-lists/:id/members/:contactId",
+	async (c: AppContext) => {
+		await cStub(c).removeContactFromList(c.req.param("id")!, c.req.param("contactId")!);
+		return c.body(null, 204);
+	},
+);
+
 // -- Newsletters (bulk send) --------------------------------------
 
 type NewsletterStub = {
@@ -487,6 +612,7 @@ type NewsletterStub = {
 	resumeNewsletter: (id: string) => Promise<Record<string, unknown>>;
 	cancelNewsletter: (id: string) => Promise<Record<string, unknown>>;
 	deleteNewsletter: (id: string) => Promise<Record<string, unknown>>;
+	getMailListRecipients: (listIds: string[]) => Promise<{ email: string; name: string }[]>;
 };
 
 const nlStub = (c: AppContext) => c.var.mailboxStub as unknown as NewsletterStub;
@@ -507,13 +633,25 @@ app.get("/api/v1/mailboxes/:mailboxId/newsletters", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/newsletters/validate", async (c: AppContext) => {
-	const { csv, template_id } = NewsletterValidateSchema.parse(await c.req.json());
+	const { csv, mail_list_ids, template_id } = NewsletterValidateSchema.parse(await c.req.json());
 	const k = await newsletterKeys(c, template_id);
 	if ("error" in k) return c.json({ error: k.error }, 404);
-	const v = validateNewsletterCsv(csv, k.keys);
+
+	if (mail_list_ids && mail_list_ids.length > 0) {
+		const contacts = await nlStub(c).getMailListRecipients(mail_list_ids);
+		const fixedKeys = k.template ? fixedTemplateKeys(k.template) : [];
+		return c.json({
+			ok: contacts.length > 0,
+			source: "lists",
+			validCount: contacts.length,
+			fixedKeys,
+		});
+	}
+
+	const v = validateNewsletterCsv(csv!, k.keys);
 	// Don't ship the full recipient list back on a dry run.
 	const { recipients: _r, ...summary } = v;
-	return c.json(summary);
+	return c.json({ ...summary, source: "csv" });
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/newsletters", async (c: AppContext) => {
@@ -522,15 +660,34 @@ app.post("/api/v1/mailboxes/:mailboxId/newsletters", async (c: AppContext) => {
 	const k = await newsletterKeys(c, body.template_id);
 	if ("error" in k) return c.json({ error: k.error }, 404);
 
-	const v = validateNewsletterCsv(body.csv, k.keys);
-	if (v.missingKeys.length > 0) {
-		return c.json({ error: `CSV is missing required column(s): ${v.missingKeys.join(", ")}`, validation: { ...v, recipients: undefined } }, 400);
-	}
-	if (v.tooManyRecipients) {
-		return c.json({ error: `Too many recipients (max ${MAX_NEWSLETTER_RECIPIENTS})` }, 400);
-	}
-	if (v.recipients.length === 0) {
-		return c.json({ error: "No valid recipients in the CSV" }, 400);
+	let recipients: { email: string; vars: Record<string, string> }[];
+	let skippedInvalid = 0;
+	let duplicatesRemoved = 0;
+
+	if (body.mail_list_ids && body.mail_list_ids.length > 0) {
+		const contacts = await nlStub(c).getMailListRecipients(body.mail_list_ids);
+		if (contacts.length === 0) {
+			return c.json({ error: "The selected mail list(s) have no contacts" }, 400);
+		}
+		if (contacts.length > MAX_NEWSLETTER_RECIPIENTS) {
+			return c.json({ error: `Too many recipients (max ${MAX_NEWSLETTER_RECIPIENTS})` }, 400);
+		}
+		const fixedKeys = k.template ? fixedTemplateKeys(k.template) : [];
+		recipients = buildMailListRecipients(contacts, fixedKeys, body.fixed_placeholders ?? {});
+	} else {
+		const v = validateNewsletterCsv(body.csv!, k.keys);
+		if (v.missingKeys.length > 0) {
+			return c.json({ error: `CSV is missing required column(s): ${v.missingKeys.join(", ")}`, validation: { ...v, recipients: undefined } }, 400);
+		}
+		if (v.tooManyRecipients) {
+			return c.json({ error: `Too many recipients (max ${MAX_NEWSLETTER_RECIPIENTS})` }, 400);
+		}
+		if (v.recipients.length === 0) {
+			return c.json({ error: "No valid recipients in the CSV" }, 400);
+		}
+		recipients = v.recipients;
+		skippedInvalid = v.skippedInvalid;
+		duplicatesRemoved = v.duplicatesRemoved;
 	}
 
 	const created = await nlStub(c).createNewsletter(
@@ -544,12 +701,9 @@ app.post("/api/v1/mailboxes/:mailboxId/newsletters", async (c: AppContext) => {
 			replyTo: body.reply_to ?? null,
 			scheduledAt: body.scheduled_at ?? null,
 		},
-		v.recipients,
+		recipients,
 	);
-	return c.json(
-		{ newsletter: created, skippedInvalid: v.skippedInvalid, duplicatesRemoved: v.duplicatesRemoved },
-		201,
-	);
+	return c.json({ newsletter: created, skippedInvalid, duplicatesRemoved }, 201);
 });
 
 app.get("/api/v1/mailboxes/:mailboxId/newsletters/:id", async (c: AppContext) => {

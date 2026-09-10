@@ -41,12 +41,19 @@ export function useValidateNewsletterCsv() {
 		mutationFn: ({
 			mailboxId,
 			csv,
+			mail_list_ids,
 			templateId,
 		}: {
 			mailboxId: string;
-			csv: string;
+			csv?: string;
+			mail_list_ids?: string[];
 			templateId?: string;
-		}) => api.validateNewsletterCsv(mailboxId, { csv, template_id: templateId }),
+		}) =>
+			api.validateNewsletterCsv(mailboxId, {
+				csv,
+				mail_list_ids,
+				template_id: templateId,
+			}),
 	});
 }
 

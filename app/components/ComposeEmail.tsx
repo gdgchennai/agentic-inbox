@@ -2,11 +2,15 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Banner, Button, Dialog, Input, Text } from "@cloudflare/kumo";
-import { FloppyDiskIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
+import { Banner, Button, Dialog, Input, Text, Tooltip } from "@cloudflare/kumo";
+import { AddressBookIcon, FloppyDiskIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
+import { useState } from "react";
 import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
+import { appendAddresses } from "~/lib/utils";
 import api from "~/services/api";
+import ContactBrowser from "./ContactBrowser";
+import RecipientInput from "./RecipientInput";
 import RichTextEditor from "./RichTextEditor";
 import TemplatePicker from "./TemplatePicker";
 import TemplatePreview from "./TemplatePreview";
@@ -45,6 +49,8 @@ export default function ComposeEmail() {
 		previewHtml,
 	} = useComposeForm(mailboxId, folder);
 
+	const [browseOpen, setBrowseOpen] = useState(false);
+
 	const handleImageUpload = mailboxId
 		? async (file: File) => {
 				const res = await api.uploadTemplateAsset(mailboxId, file);
@@ -63,45 +69,59 @@ export default function ComposeEmail() {
 				</Dialog.Title>
 				<form onSubmit={(e) => handleSend(e, closeComposeModal)} className="space-y-4">
 					{error && <Banner variant="error" text={error} />}
-					<div className="flex items-center gap-2">
+					<div className="flex items-end gap-2">
 						<div className="flex-1">
-							<Input
+							<RecipientInput
 								label="To"
-								type="text"
+								mailboxId={mailboxId}
 								placeholder="recipient@example.com, another@example.com"
-								size="sm"
 								value={to}
-								onChange={(e) => setTo(e.target.value)}
+								onChange={setTo}
 								required
 							/>
 						</div>
+						<Tooltip content="Browse contacts" side="bottom" asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								shape="square"
+								size="sm"
+								icon={<AddressBookIcon size={16} />}
+								onClick={() => setBrowseOpen(true)}
+								aria-label="Browse contacts"
+							/>
+						</Tooltip>
 						{!showCcBcc && (
 							<button
 								type="button"
 								onClick={() => setShowCcBcc(true)}
-								className="shrink-0 text-xs text-kumo-link hover:text-kumo-link-hover font-medium mt-5"
+								className="shrink-0 text-xs text-kumo-link hover:text-kumo-link-hover font-medium h-8"
 							>
 								CC / BCC
 							</button>
 						)}
 					</div>
+					<ContactBrowser
+						mailboxId={mailboxId}
+						open={browseOpen}
+						onOpenChange={setBrowseOpen}
+						onAdd={(emails) => setTo(appendAddresses(to, emails))}
+					/>
 					{showCcBcc && (
-						<Input
+						<RecipientInput
 							label="CC"
-							type="text"
-							size="sm"
+							mailboxId={mailboxId}
 							value={cc}
-							onChange={(e) => setCc(e.target.value)}
+							onChange={setCc}
 							placeholder="Separate multiple addresses with commas"
 						/>
 					)}
 					{showCcBcc && (
-						<Input
+						<RecipientInput
 							label="BCC"
-							type="text"
-							size="sm"
+							mailboxId={mailboxId}
 							value={bcc}
-							onChange={(e) => setBcc(e.target.value)}
+							onChange={setBcc}
 							placeholder="Separate multiple addresses with commas"
 						/>
 					)}
